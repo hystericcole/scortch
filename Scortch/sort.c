@@ -6,65 +6,13 @@
 //  Copyright © 2020 Eric Cole. All rights reserved.
 //
 
-#include <stdlib.h>
 #include <string.h>
-#include <math.h>
-#include <time.h>
-#include <sys/time.h>
 #include "sort.h"
-
-#ifndef LONG_MAX
-#define LONG_MAX ((long)(~0UL >> 1))
-#endif
-
-#ifndef countof
-#define countof(_) (sizeof(_)/sizeof(_[0]))
-#endif
-
-typedef unsigned IsLess(void const *, void const *, void *);
-typedef signed Compare(void const *, void const *, void *);
 
 struct PointerCount {
 	void const *p;
 	size_t n;
 };
-
-//	MARK: - Statistics
-
-struct SortingStatistics {
-	long invocations;
-	long accesses;
-	long assignments;
-	long comparisons;
-	
-	long timerBegan;
-	long timerEnded;
-};
-
-uint64_t microsecondsSince1970() {
-	struct timeval t = {};
-	
-	gettimeofday(&t, NULL);
-	
-	return (uint64_t)t.tv_sec * 1000000 + (uint64_t)t.tv_usec;
-}
-
-void sortingStatisticsReset(struct SortingStatistics *statistics) {
-	statistics->invocations = 0;
-	statistics->accesses = 0;
-	statistics->assignments = 0;
-	statistics->comparisons = 0;
-	statistics->timerBegan = microsecondsSince1970();
-	statistics->timerEnded = 0;
-}
-
-void sortingStatisticsBegin(struct SortingStatistics *statistics) {
-	statistics->timerBegan = microsecondsSince1970();
-}
-
-void sortingStatisticsEnded(struct SortingStatistics *statistics) {
-	statistics->timerEnded = microsecondsSince1970();
-}
 
 //	MARK: - Utility
 
@@ -95,30 +43,6 @@ unsigned invokeStableIsLess(void const * a, void const * b, struct SortingStatis
 	signed c = compare(a, b, context);
 	
 	return c ? c < 0 : a < b;
-}
-
-unsigned isAscending(void const *array, size_t count, size_t size, Compare compare, void *context) {
-	size_t index;
-	
-	for ( index = 1 ; index < count ; ++index ) {
-		if ( compare(array + index * size, array + (index - 1) * size, context) < 0 ) {
-			return 0;
-		}
-	}
-	
-	return 1;
-}
-
-unsigned isDescending(void const *array, size_t count, size_t size, Compare compare, void *context) {
-	size_t index;
-	
-	for ( index = 1 ; index < count ; ++index ) {
-		if ( compare(array + (index - 1) * size, array + index * size, context) < 0 ) {
-			return 0;
-		}
-	}
-	
-	return 1;
 }
 
 //	MARK: - Data Motion
@@ -360,7 +284,7 @@ void mergeSorted(void *array, size_t count, size_t split, size_t size, void *buf
 	size_t i, j, n;
 	
 	if ( split * size > space ) {
-		memmove(buffer, array + split * size, (count - split) * size);
+		assignManyAt(buffer, 0, count - split, size, array + split * size, statistics);
 		
 		for ( i = 0, j = split, n = 0 ; n < count ; ++n ) {
 			if ( i < split && invokeIsLess(buffer + (count - j - 1) * size, array + (split - i - 1) * size, statistics, compare, context) ) {
@@ -372,7 +296,7 @@ void mergeSorted(void *array, size_t count, size_t split, size_t size, void *buf
 			}
 		}
 	} else {
-		memmove(buffer, array, split * size);
+		assignManyAt(buffer, 0, split, size, array, statistics);
 		
 		for ( i = 0, j = split, n = 0 ; n < count && i < split ; ++n ) {
 			if ( j < count && invokeIsLess(array + j * size, buffer + i * size, statistics, compare, context) ) {
@@ -505,6 +429,901 @@ void seriesMergeSort(void *array, size_t count, size_t size, void *buffer, size_
 		
 		sorted += length;
 		minimum = count - sorted < sorted ? count - sorted : sorted;
+	}
+}
+
+//	MARK: - Four Sort
+
+void fourSort(void *array, size_t size, void *buffer, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+		statistics->accesses += 4;
+	}
+	
+	unsigned reverseLower = invokeIsLess(array + 1 * size, array + 0 * size, statistics, compare, context) ? 1 : 0;
+	unsigned reverseUpper = invokeIsLess(array + 3 * size, array + 2 * size, statistics, compare, context) ? 1 : 0;
+	
+	assignAt(buffer, 0, size, array + (0 + reverseLower) * size, statistics);
+	assignAt(buffer, 1, size, array + (1 - reverseLower) * size, statistics);
+	assignAt(buffer, 2, size, array + (2 + reverseUpper) * size, statistics);
+	assignAt(buffer, 3, size, array + (3 - reverseUpper) * size, statistics);
+	
+	if ( !invokeIsLess(buffer + 2 * size, buffer + 1 * size, statistics, compare, context) ) {
+		if ( reverseLower ) {
+			assignAt(array, 0, size, buffer + 0 * size, statistics);
+			assignAt(array, 1, size, buffer + 1 * size, statistics);
+		}
+		
+		if ( reverseUpper ) {
+			assignAt(array, 2, size, buffer + 2 * size, statistics);
+			assignAt(array, 3, size, buffer + 3 * size, statistics);
+		}
+	} else if ( invokeIsLess(buffer + 3 * size, buffer + 0 * size, statistics, compare, context) ) {
+		assignAt(array, 0, size, buffer + 2 * size, statistics);
+		assignAt(array, 1, size, buffer + 3 * size, statistics);
+		assignAt(array, 2, size, buffer + 0 * size, statistics);
+		assignAt(array, 3, size, buffer + 1 * size, statistics);
+	} else {
+		if ( invokeIsLess(buffer + 2 * size, buffer + 0 * size, statistics, compare, context) ) {
+			assignAt(array, 0, size, buffer + 2 * size, statistics);
+			assignAt(array, 1, size, buffer + 0 * size, statistics);
+		} else {
+			if ( reverseLower ) {
+				assignAt(array, 0, size, buffer + 0 * size, statistics);
+			}
+			
+			assignAt(array, 1, size, buffer + 2 * size, statistics);
+		}
+		
+		if ( invokeIsLess(buffer + 3 * size, buffer + 1 * size, statistics, compare, context) ) {
+			assignAt(array, 2, size, buffer + 3 * size, statistics);
+			assignAt(array, 3, size, buffer + 1 * size, statistics);
+		} else {
+			assignAt(array, 2, size, buffer + 1 * size, statistics);
+			
+			if ( reverseUpper ) {
+				assignAt(array, 3, size, buffer + 3 * size, statistics);
+			}
+		}
+	}
+}
+
+void mergeIntoSorted(void const *unmerged, void *merged, size_t count, size_t split, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	size_t i, j, n;
+	
+	for ( i = 0, j = split, n = 0 ; i < split && j < count ; ++n ) {
+		if ( invokeIsLess(unmerged + j * size, unmerged + i * size, statistics, compare, context) ) {
+			assignAt(merged, n, size, unmerged + j * size, statistics);
+			j += 1;
+		} else {
+			assignAt(merged, n, size, unmerged + i * size, statistics);
+			i += 1;
+		}
+	}
+	
+	if ( i < split ) {
+		assignManyAt(merged, n, split - i, size, unmerged + i * size, statistics);
+	}
+	
+	if ( j < count ) {
+		assignManyAt(merged, n, count - j, size, unmerged + j * size, statistics);
+	}
+}
+
+void mergeFourSorted(void *array, void *buffer, size_t count, size_t width, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	size_t half = width * 2 < count ? width * 2 : count;
+	size_t last = width * 3;
+	
+	signed lowerOrder, upperOrder, order;
+	
+	if ( count <= width ) {
+		return;
+	} else if ( !invokeIsLess(array + width * size, array + (width - 1) * size, statistics, compare, context) ) {
+		lowerOrder = 1;
+	} else if ( invokeIsLess(array + (half - 1) * size, array + 0 * size, statistics, compare, context) ) {
+		lowerOrder = -1;
+	} else {
+		lowerOrder = 0;
+	}
+	
+	if ( count <= last ) {
+		upperOrder = 2;
+	} else if ( !invokeIsLess(array + last * size, array + (last - 1) * size, statistics, compare, context) ) {
+		upperOrder = 1;
+	} else if ( invokeIsLess(array + (count - 1) * size, array + half * size, statistics, compare, context) ) {
+		upperOrder = -1;
+	} else {
+		upperOrder = 0;
+	}
+	
+	if ( lowerOrder && upperOrder ) {
+		if ( count <= half ) {
+			order = 2;
+		} else if ( !invokeIsLess(array + (upperOrder > 0 ? half : last) * size, array + ((lowerOrder > 0 ? half : width) - 1) * size, statistics, compare, context) ) {
+			order = 1;
+		} else if ( invokeIsLess(array + ((upperOrder > 0 ? count : last) - 1) * size, array + (lowerOrder > 0 ? 0 : width) * size, statistics, compare, context) ) {
+			order = -1;
+		} else {
+			order = 0;
+		}
+		
+		if ( order > 0 ) {
+			if ( lowerOrder < 0 ) {
+				assignManyAt(buffer, 0, width, size, array, statistics);
+				assignManyAt(array, 0, half - width, size, array + width * size, statistics);
+				assignManyAt(array, half - width, width, size, buffer, statistics);
+			}
+			
+			if ( upperOrder < 0 ) {
+				assignManyAt(buffer, 0, width, size, array + half * size, statistics);
+				assignManyAt(array, half, count - last, size, array + last * size, statistics);
+				assignManyAt(array, count - width, width, size, buffer, statistics);
+			}
+			
+			return;
+		}
+		
+		if ( order < 0 ) {
+			if ( lowerOrder < 0 ) {
+				assignManyAt(buffer, 0, half - width, size, array + width * size, statistics);
+				assignManyAt(buffer, half - width, width, size, array, statistics);
+			} else {
+				assignManyAt(buffer, 0, half, size, array, statistics);
+			}
+			
+			if ( upperOrder < 0 ) {
+				assignManyAt(array, 0, count - last, size, array + last * size, statistics);
+				assignManyAt(array, count - last, width, size, array + half * size, statistics);
+			} else {
+				assignManyAt(array, 0, count - half, size, array + half * size, statistics);
+			}
+			
+			assignManyAt(array, count - half, half, size, buffer, statistics);
+			
+			return;
+		}
+	}
+	
+	if ( lowerOrder < 0 ) {
+		assignManyAt(buffer, 0, half - width, size, array + width * size, statistics);
+		assignManyAt(buffer, half - width, width, size, array, statistics);
+	} else if ( lowerOrder > 0 ) {
+		assignManyAt(buffer, 0, half, size, array, statistics);
+	} else {
+		mergeIntoSorted(array, buffer, half, width, size, statistics, compare, context);
+	}
+	
+	if ( upperOrder < 0 ) {
+		assignManyAt(buffer, half, count - last, size, array + last * size, statistics);
+		assignManyAt(buffer, count - width, width, size, array + half * size, statistics);
+	} else if ( upperOrder > 0 ) {
+		assignManyAt(buffer, half, count - half, size, array + half * size, statistics);
+	} else {
+		mergeIntoSorted(array + half * size, buffer + half * size, count - half, width, size, statistics, compare, context);
+	}
+	
+	mergeIntoSorted(buffer, array, count, half, size, statistics, compare, context);
+}
+
+void mergeFourSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	size_t index, width;
+	
+	if ( count <= 1 ) {
+		return;
+	} else if ( count <= 16 ) {
+		width = 4;
+		
+		for ( index = 0 ; index + 4 <= count ; index += 4 ) {
+			fourSort(array + index * size, size, buffer, statistics, compare, context);
+		}
+		
+		if ( index + 1 < count ) {
+			binaryInsertionSort(array + index * size, count - index, size, 1, buffer, statistics, compare, context);
+		}
+	} else {
+		width = count > 64 ? (count + 3) / 4 : 16;
+		
+		for ( index = 0 ; index + width <= count ; index += width ) {
+			mergeFourSort(array + index * size, buffer, width, size, statistics, compare, context);
+		}
+		
+		if ( index + 1 < count ) {
+			mergeFourSort(array + index * size, buffer, count - index, size, statistics, compare, context);
+		}
+	}
+	
+	mergeFourSorted(array, buffer, count, width, size, statistics, compare, context);
+}
+
+///	Bottom up merge sort that quadruples instead of doubles at each iteration
+void bottomUpMergeFourSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	size_t block, index, limit, width = 4;
+	
+	for ( index = 0 ; index + width <= count ; index += width ) {
+		fourSort(array + index * size, size, buffer, statistics, compare, context);
+	}
+	
+	if ( index + 1 < count ) {
+		binaryInsertionSort(array + index * size, count - index, size, 1, buffer, statistics, compare, context);
+	}
+	
+	while ( width < count ) {
+		block = width * 4;
+		
+		for ( index = 0 ; index + width < count ; index += block ) {
+			limit = count - index < block ? count - index : block;
+			
+			mergeFourSorted(array + index * size, buffer, limit, width, size, statistics, compare, context);
+		}
+		
+		width = block;
+	}
+}
+
+//	MARK: - Cole Sort
+
+void coleMergeIntoSorted(void const *unmerged, void *merged, size_t count, size_t split, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	size_t i, j, m, n, o = count - split;
+	
+	if ( 0 < split && split < count ) {
+		//	small + large > small * log2(large)
+		//	+3 to avoid edge cases for very small values
+		
+		if ( (o + 3) >> (o / split) <= 1 ) {
+			for ( i = 0, j = split ; i < split ; ++i ) {
+				m = j;
+				n = count - 1;
+				
+				while ( m <= n ) {
+					o = (m + n) / 2;
+					
+					if ( invokeIsLess(unmerged + i * size, unmerged + o * size, statistics, compare, context) ) {
+						n = o - 1;
+					} else {
+						m = o + 1;
+					}
+				}
+				
+				assignManyAt(merged, i + j - split, m - j, size, unmerged + j * size, statistics);
+				assignAt(merged, i + m - split, size, unmerged + i * size, statistics);
+				
+				j = m;
+			}
+			
+			assignManyAt(merged, j, count - j, size, unmerged + j * size, statistics);
+			return;
+		}
+		
+		if ( (split + 3) >> (split / o) <= 1 ) {
+			for ( i = 0, j = split ; j < count ; ++j ) {
+				m = i + 1;
+				n = split;
+				
+				while ( m <= n ) {
+					o = (m + n) / 2 - 1;
+					
+					if ( invokeIsLess(unmerged + j * size, unmerged + o * size, statistics, compare, context) ) {
+						n = o;
+					} else {
+						m = o + 2;
+					}
+				}
+				
+				m -= 1;
+				
+				assignManyAt(merged, i + j - split, m - i, size, unmerged + i * size, statistics);
+				assignAt(merged, j + m - split, size, unmerged + j * size, statistics);
+				
+				i = m;
+			}
+			
+			assignManyAt(merged, count - split + i, split - i, size, unmerged + i * size, statistics);
+			return;
+		}
+	}
+	
+	for ( i = 0, j = split, n = 0 ; i < split && j < count ; ++n ) {
+		if ( invokeIsLess(unmerged + j * size, unmerged + i * size, statistics, compare, context) ) {
+			assignAt(merged, n, size, unmerged + j * size, statistics);
+			j += 1;
+		} else {
+			assignAt(merged, n, size, unmerged + i * size, statistics);
+			i += 1;
+		}
+	}
+	
+	if ( i < split ) {
+		assignManyAt(merged, n, split - i, size, unmerged + i * size, statistics);
+	}
+	
+	if ( j < count ) {
+		assignManyAt(merged, n, count - j, size, unmerged + j * size, statistics);
+	}
+}
+
+void coleMergeSorted(void *array, size_t runs[4], size_t size, void *buffer, struct SortingStatistics *statistics, Compare compare, void *context) {
+	size_t a = 0, b = runs[0], c = runs[1] + b, d = runs[2] + c, e = runs[3] + d;
+	
+	if ( b == e ) {
+		return;
+	} else if ( b == c || !invokeIsLess(array + b * size, array + (b - 1) * size, statistics, compare, context) ) {
+		assignManyAt(buffer, a, c - a, size, array, statistics);
+	} else if ( invokeIsLess(array + (c - 1) * size, array + a * size, statistics, compare, context) ) {
+		assignManyAt(buffer, a, c - b, size, array + b * size, statistics);
+		assignManyAt(buffer, a + c - b, b - a, size, array, statistics);
+	} else {
+		coleMergeIntoSorted(array, buffer, c - a, b - a, size, statistics, compare, context);
+	}
+	
+	if ( c == e ) {
+		//
+	} else if ( d == e || !invokeIsLess(array + d * size, array + (d - 1) * size, statistics, compare, context) ) {
+		assignManyAt(buffer, c, e - c, size, array + c * size, statistics);
+	} else if ( invokeIsLess(array + (e - 1) * size, array + c * size, statistics, compare, context) ) {
+		assignManyAt(buffer, c, e - d, size, array + d * size, statistics);
+		assignManyAt(buffer, c + e - d, d - c, size, array + c * size, statistics);
+	} else {
+		coleMergeIntoSorted(array + c * size, buffer + c * size, e - c, d - c, size, statistics, compare, context);
+	}
+	
+	coleMergeIntoSorted(buffer, array, e, c, size, statistics, compare, context);
+}
+
+size_t coleSeek(void *array, void *buffer, size_t count, size_t size, size_t minimum, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	if ( count < 2 ) {
+		return count;
+	}
+	
+	size_t minimumRun = 8;
+	size_t runs[4] = {};
+	size_t run = 0, sum = 0, seek, limit, equals;
+	unsigned i, isReversed;
+	signed c;
+	
+	for ( i = 0 ; i < 4 && run + 1 < count ; ++i ) {
+		isReversed = invokeIsLess(array + (run + 1) * size, array + (run + 0) * size, statistics, compare, context);
+		run += 2;
+		
+		if ( isReversed ) {
+			equals = 0;
+			
+			while ( 1 ) {
+				if ( run < count ) {
+					c = invokeCompare(array + run * size, array + (run - 1) * size, statistics, compare, context);
+				} else {
+					c = 1;
+				}
+				
+				if ( c == 0 ) {
+					equals += 1;
+				} else if ( equals > 0 ) {
+					//	preserve stability of equal elements within descending runs
+					reverse(array + (run - equals - 1) * size, equals + 1, size, buffer, statistics);
+					equals = 0;
+				}
+				
+				if ( c > 0 ) {
+					break;
+				}
+				
+				run += 1;
+			}
+		} else {
+			while ( run < count && isReversed == invokeIsLess(array + run * size, array + (run - 1) * size, statistics, compare, context) ) {
+				run += 1;
+			}
+		}
+		
+		if ( isReversed ) {
+			reverse(array + sum * size, run - sum, size, buffer, statistics);
+		}
+		
+		if ( run < sum + minimumRun && run + 1 < minimum ) {
+			limit = count < sum + minimumRun ? count - sum : minimumRun;
+			
+			binaryInsertionSort(array + sum * size, limit, size, run - sum, buffer, statistics, compare, context);
+			
+			run = sum + limit;
+		}
+		
+		runs[i] = run - sum;
+		sum = run;
+	}
+	
+	if ( run + 1 == count ) {
+		limit = runs[i - 1];
+		
+		if ( i < 4 ) {
+			runs[i] = 1;
+			i += 1;
+		} else {
+			binaryInsertionSort(array + (sum - limit) * size, limit + 1, size, limit, buffer, statistics, compare, context);
+			runs[i - 1] += 1;
+		}
+		
+		run += 1;
+		sum = run;
+	}
+	
+	coleMergeSorted(array, runs, size, buffer, statistics, compare, context);
+	
+	while ( run < minimum ) {
+		runs[0] = run;
+		runs[2] = 0;
+		runs[3] = 0;
+		seek = run > minimumRun * 4 ? run * 3 / 4 : run;
+		
+		for ( i = 1 ; i < 4 && sum < count ; ++i ) {
+			limit = count - sum;
+			seek = limit < seek ? limit : seek;
+			
+			run = coleSeek(array + sum * size, buffer, limit, size, seek, statistics, compare, context);
+			sum += run;
+			runs[i] = run;
+		}
+		
+		if ( i == 3 && runs[2] < runs[0] && (runs[0] + runs[1] + 3) >> ((runs[0] + runs[1]) / runs[2]) > 1 ) {
+			runs[3] = runs[2];
+			runs[2] = runs[1];
+			runs[1] = 0;
+			i = 4;
+		}
+		
+		coleMergeSorted(array, runs, size, buffer, statistics, compare, context);
+		run = sum;
+	}
+	
+	return sum;
+}
+
+///	Merge sort that operates on four runs at a time, starting with natural ascending or descending runs
+void coleSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( count < 16 ) {
+		binaryInsertionSort(array, count, size, 1, buffer, statistics, compare, context);
+		return;
+	}
+	
+	coleSeek(array, buffer, count, size, count, statistics, compare, context);
+}
+
+//	MARK: - Tumble Marge Sort
+
+#define kTumbleMaximumRuns 32
+
+size_t tumbleMergeIntoSorted(void const *unmerged, void *merged, size_t runs[], unsigned runCount, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	size_t index, total = 0;
+	struct PointerCount pointers[kTumbleMaximumRuns];
+	struct PointerCount temporary[1];
+	unsigned i, m, n, o, valid = runCount;
+	
+	for ( i = 0 ; i < valid ; ++i ) {
+		index = runs[i];
+		pointers[i].p = unmerged + total * size;
+		pointers[i].n = index;
+		total += index;
+	}
+	
+	for ( i = 1 ; i < valid ; ++i ) {
+		m = 1;
+		n = i;
+		
+		while ( m <= n ) {
+			o = (m + n) / 2;
+			
+			if ( invokeIsLess(pointers[i].p, pointers[o - 1].p, statistics, compare, context) ) {
+				n = o - 1;
+			} else {
+				m = o + 1;
+			}
+		}
+		
+		if ( m <= i ) {
+			slideDown(pointers, i, m - 1, sizeof(struct PointerCount), temporary, NULL);
+		}
+	}
+	
+	for ( index = 0 ; index < total ; ++index ) {
+		assignAt(merged, index, size, pointers[0].p, statistics);
+		
+		pointers[0].n -= 1;
+		
+		if ( pointers[0].n > 0 ) {
+			pointers[0].p += size;
+			
+			m = 1;
+			n = valid - 1;
+			
+			while ( m <= n ) {
+				o = (m + n) / 2;
+				
+				if ( invokeStableIsLess(pointers[0].p, pointers[o].p, statistics, compare, context) ) {
+					n = o - 1;
+				} else {
+					m = o + 1;
+				}
+			}
+			
+			if ( m > 1 ) {
+				slideUp(pointers, 0, m - 1, sizeof(struct PointerCount), temporary, NULL);
+			}
+		} else {
+			valid -= 1;
+			
+			slideUp(pointers, 0, valid, sizeof(struct PointerCount), temporary, NULL);
+		}
+	}
+	
+	return total;
+}
+
+unsigned tumbleMergeSorted(void *unmerged, size_t runs[], unsigned count, size_t size, void *merged, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( count > 2 ) {
+		tumbleMergeIntoSorted(unmerged, merged, runs, count, size, statistics, compare, context);
+	} else if ( count > 1 ) {
+		coleMergeIntoSorted(unmerged, merged, runs[0] + runs[1], runs[0], size, statistics, compare, context);
+	} else {
+		return 0;
+	}
+	
+	return 1;
+}
+
+size_t tumbleMergeSeek(void *array, void *buffer, size_t count, size_t size, size_t minimum, unsigned juggling, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	if ( count < 2 ) {
+		return count;
+	}
+	
+	size_t runs[kTumbleMaximumRuns];
+	size_t run = 0, sum = 0, seek, limit;
+	unsigned i, isReversed, resultsInBuffer;
+	
+	for ( i = 0 ; i < kTumbleMaximumRuns && run + 1 < count ; ++i ) {
+		isReversed = invokeIsLess(array + (run + 1) * size, array + (run + 0) * size, statistics, compare, context);
+		run += 2;
+		
+		while ( run < count && isReversed == invokeIsLess(array + run * size, array + (run - 1) * size, statistics, compare, context) ) {
+			run += 1;
+		}
+		
+		if ( isReversed ) {
+			reverse(array + sum * size, run - sum, size, buffer, statistics);
+		}
+		
+		runs[i] = run - sum;
+		sum = run;
+	}
+	
+	if ( run + 1 == count ) {
+		limit = runs[i - 1];
+		
+		if ( i < kTumbleMaximumRuns && limit > 8 ) {
+			runs[i] = 1;
+			i += 1;
+		} else {
+			binaryInsertionSort(array + (sum - limit) * size, limit + 1, size, limit, buffer, statistics, compare, context);
+			runs[i - 1] += 1;
+		}
+		
+		run += 1;
+		sum = run;
+	}
+	
+	resultsInBuffer = tumbleMergeSorted(array, runs, i, size, buffer, statistics, compare, context);
+	
+	while ( run < minimum ) {
+		runs[0] = run;
+		seek = run * 3 / 4;
+		
+		for ( i = 1 ; i < kTumbleMaximumRuns && sum < count ; ++i ) {
+			limit = count - sum;
+			seek = limit < seek ? limit : seek;
+			
+			run = tumbleMergeSeek(array + sum * size, buffer + sum * size, limit, size, seek, resultsInBuffer, statistics, compare, context);
+			sum += run;
+			runs[i] = run;
+		}
+		
+		void *merged = resultsInBuffer ? array : buffer;
+		void *unmerged = resultsInBuffer ? buffer : array;
+		
+		resultsInBuffer ^= tumbleMergeSorted(unmerged, runs, i, size, merged, statistics, compare, context);
+		run = sum;
+	}
+	
+	if ( resultsInBuffer != juggling ) {
+		void *target = resultsInBuffer ? array : buffer;
+		void *source = resultsInBuffer ? buffer : array;
+		
+		assignManyAt(target, 0, sum, size, source, statistics);
+	}
+	
+	return sum;
+}
+
+///	Merge sort that operates on many runs at a time, starting with natural ascending or descending runs
+void tumbleMergeSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( count < 16 ) {
+		binaryInsertionSort(array, count, size, 1, buffer, statistics, compare, context);
+		return;
+	}
+	
+	tumbleMergeSeek(array, buffer, count, size, count, 0, statistics, compare, context);
+}
+
+//	MARK: - Polymerge Sort
+
+#define kPolymergeMaximumRuns 32
+
+void polymergeFourSort(void *unsorted, void *sorted, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+		statistics->accesses += 4;
+	}
+	
+	unsigned reverseLower = invokeIsLess(unsorted + 1 * size, unsorted + 0 * size, statistics, compare, context) ? 1 : 0;
+	unsigned reverseUpper = invokeIsLess(unsorted + 3 * size, unsorted + 2 * size, statistics, compare, context) ? 1 : 0;
+	
+	unsigned _0 = 0 + reverseLower;
+	unsigned _1 = 1 - reverseLower;
+	unsigned _2 = 2 + reverseUpper;
+	unsigned _3 = 3 - reverseUpper;
+	unsigned t;
+	
+	if ( !invokeIsLess(unsorted + _2 * size, unsorted + _1 * size, statistics, compare, context) ) {
+		
+	} else if ( invokeIsLess(unsorted + _3 * size, unsorted + _0 * size, statistics, compare, context) ) {
+		t = _0; _0 = _2; _2 = t;
+		t = _1; _1 = _3; _3 = t;
+	} else {
+		if ( invokeIsLess(unsorted + _2 * size, unsorted + _0 * size, statistics, compare, context) ) {
+			t = _2; _2 = _1; _1 = _0; _0 = t;
+		} else {
+			t = _2; _2 = _1; _1 = t;
+		}
+		
+		if ( invokeIsLess(unsorted + _3 * size, unsorted + _2 * size, statistics, compare, context) ) {
+			t = _2; _2 = _3; _3 = t;
+		}
+	}
+	
+	assignAt(sorted, 0, size, unsorted + _0 * size, statistics);
+	assignAt(sorted, 1, size, unsorted + _1 * size, statistics);
+	assignAt(sorted, 2, size, unsorted + _2 * size, statistics);
+	assignAt(sorted, 3, size, unsorted + _3 * size, statistics);
+}
+
+void polymergeSorted(void const *unmerged, void *merged, size_t count, size_t width, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	size_t index = 0, blocks = (count + width - 1) / width;
+	struct PointerCount pointers[kPolymergeMaximumRuns + 4];
+	unsigned i, m, n, o, valid = (unsigned)blocks;
+	
+	for ( i = 0 ; i < valid ; ++i ) {
+		pointers[i].p = unmerged + index * size;
+		pointers[i].n = width;
+		index += width;
+	}
+	
+	pointers[valid - 1].n = count - (blocks - 1) * width;
+	
+	for ( i = 1 ; i < valid ; ++i ) {
+		m = 1;
+		n = i;
+		
+		while ( m <= n ) {
+			o = (m + n) / 2;
+			
+			if ( invokeIsLess(pointers[i].p, pointers[o - 1].p, statistics, compare, context) ) {
+				n = o - 1;
+			} else {
+				m = o + 1;
+			}
+		}
+		
+		if ( m <= i ) {
+			slideDown(pointers, i, m - 1, sizeof(struct PointerCount), pointers + blocks, NULL);
+		}
+	}
+	
+	for ( index = 0 ; index < count ; ++index ) {
+		assignAt(merged, index, size, pointers[0].p, statistics);
+		
+		pointers[0].n -= 1;
+		
+		if ( pointers[0].n > 0 ) {
+			pointers[0].p += size;
+			
+			m = 1;
+			n = valid - 1;
+			
+			while ( m <= n ) {
+				o = (m + n) / 2;
+				
+				if ( invokeStableIsLess(pointers[0].p, pointers[o].p, statistics, compare, context) ) {
+					n = o - 1;
+				} else {
+					m = o + 1;
+				}
+			}
+			
+			if ( m > 1 ) {
+				slideUp(pointers, 0, m - 1, sizeof(struct PointerCount), pointers + blocks, NULL);
+			}
+		} else {
+			valid -= 1;
+			
+			slideUp(pointers, 0, valid, sizeof(struct PointerCount), pointers + blocks, NULL);
+		}
+	}
+}
+
+void polymergeJuggle(void *array, void *buffer, size_t count, size_t size, unsigned juggling, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	if ( count <= kPolymergeMaximumRuns * 4 ) {
+		size_t index, width = 4;
+		
+		if ( !juggling != (width < count) ) {
+			for ( index = 0 ; index + width <= count ; index += width ) {
+				fourSort(array + index * size, size, buffer, statistics, compare, context);
+			}
+			
+			if ( index + 1 < count ) {
+				binaryInsertionSort(array + index * size, count - index, size, 1, buffer, statistics, compare, context);
+			}
+			
+			if ( width < count ) {
+				polymergeSorted(array, buffer, count, width, size, statistics, compare, context);
+			}
+		} else {
+			for ( index = 0 ; index + width <= count ; index += width ) {
+				polymergeFourSort(array + index * size, buffer + index * size, size, statistics, compare, context);
+			}
+			
+			if ( index < count ) {
+				binaryMoveSort(array + index * size, buffer + index * size, count - index, size, statistics, compare, context);
+			}
+			
+			if ( width < count ) {
+				polymergeSorted(buffer, array, count, width, size, statistics, compare, context);
+			}
+		}
+	} else {
+		size_t index, limit, width = (count + kPolymergeMaximumRuns - 1) / kPolymergeMaximumRuns;
+		
+		for ( index = 0 ; index < count ; index += width ) {
+			limit = count - index < width ? count - index : width;
+			
+			polymergeJuggle(array + index * size, buffer + index * size, limit, size, !juggling, statistics, compare, context);
+		}
+		
+		void *unmerged = juggling ? array : buffer;
+		void *merged = juggling ? buffer : array;
+		
+		polymergeSorted(unmerged, merged, count, width, size, statistics, compare, context);
+	}
+}
+
+///	Merge sort that operates on many runs at a time, starting with runs of four
+void polymergeSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( count < 2 ) {
+		return;
+	} else {
+		polymergeJuggle(array, buffer, count, size, 0, statistics, compare, context);
+	}
+}
+
+void bottomUpPolymergeSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( count < 4 ) {
+		binaryInsertionSort(array, count, size, 1, buffer, statistics, compare, context);
+		return;
+	}
+	
+	size_t block, limit, index, width = 4;
+	void *merged, *unmerged;
+	unsigned resultsInBuffer = 0;
+	
+	while ( width < count ) {
+		width *= kPolymergeMaximumRuns;
+		resultsInBuffer ^= 1;
+	}
+	
+	width = 4;
+	
+	if ( resultsInBuffer ) {
+		for ( index = 0 ; index + width <= count ; index += width ) {
+			polymergeFourSort(array + index * size, buffer + index * size, size, statistics, compare, context);
+		}
+		
+		if ( index < count ) {
+			binaryMoveSort(array + index * size, buffer + index * size, count - index, size, statistics, compare, context);
+		}
+	} else {
+		for ( index = 0 ; index + width <= count ; index += width ) {
+			fourSort(array + index * size, size, buffer, statistics, compare, context);
+		}
+		
+		if ( index + 1 < count ) {
+			binaryInsertionSort(array + index * size, count - index, size, 1, buffer, statistics, compare, context);
+		}
+	}
+	
+	while ( width < count ) {
+		block = width * kPolymergeMaximumRuns;
+		merged = resultsInBuffer ? array : buffer;
+		unmerged = resultsInBuffer ? buffer : array;
+		
+		for ( index = 0 ; index < count ; index += block ) {
+			limit = count - index < block ? count - index : block;
+			
+			polymergeSorted(unmerged + index * size, merged + index * size, limit, width, size, statistics, compare, context);
+		}
+		
+		width = block;
+		resultsInBuffer ^= 1;
+	}
+	
+	if ( resultsInBuffer ) {
+		assignManyAt(array, 0, count, size, buffer, statistics);
+	}
+}
+
+//	MARK: - Juggle Merge Sort
+
+void juggleMergeSort(void *array, void *buffer, size_t count, size_t size, unsigned juggling, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	if ( count < 2 ) {
+		if ( juggling && count > 0 ) {
+			assignManyAt(buffer, 0, count, size, array, statistics);
+		}
+	} else if ( count < 32 ) {
+		if ( juggling ) {
+			binaryMoveSort(array, buffer, count, size, statistics, compare, context);
+		} else {
+			binaryInsertionSort(array, count, size, 1, buffer, statistics, compare, context);
+		}
+	} else {
+		size_t half = count / 2;
+		
+		juggleMergeSort(array, buffer, half, size, !juggling, statistics, compare, context);
+		juggleMergeSort(array + half * size, buffer + half * size, count - half, size, !juggling, statistics, compare, context);
+		
+		void *unmerged = juggling ? array : buffer;
+		void *merged = juggling ? buffer : array;
+		
+		mergeIntoSorted(unmerged, merged, count, half, size, statistics, compare, context);
 	}
 }
 
@@ -653,317 +1472,5 @@ void balancingQuickSort(void *array, size_t count, size_t size, unsigned imbalan
 		
 		balancingQuickSort(array, pivot, size, imbalances, temporary, statistics, compare, context);
 		balancingQuickSort(array + pivot * size, count - pivot, size, imbalances, temporary, statistics, compare, context);
-	}
-}
-
-//	MARK: - Testing
-
-//unsigned isLessStabilityTestingUnsigned(unsigned * const a, unsigned * const b, void *context) {
-//	return (*a >> 8) < (*b >> 8);
-//}
-
-signed compareStabilityTestingUnsigned(unsigned * const a, unsigned * const b, void *context) {
-	return (signed)(*a >> 8) - (signed)(*b >> 8);
-}
-
-//unsigned isLessUnsigned(unsigned * const a, unsigned * const b, void *context) {
-//	return *a < *b;
-//}
-
-signed compareUnsigned(unsigned * const a, unsigned * const b, void *context) {
-	return *a < *b ? -1 : *a > *b ? 1 : 0;
-}
-
-//unsigned isLessString(char ** const a, char ** const b, void *context) {
-//	return strcmp(*a, *b) < 0;
-//}
-
-signed compareString(char ** const a, char ** const b, void *context) {
-	return strcmp(*a, *b);
-}
-
-void populateRandomIntegerArray(unsigned *array, unsigned count) {
-	unsigned index;
-	
-	for ( index = 0 ; index < count ; ++index ) {
-		array[index] = arc4random();
-	}
-}
-
-unsigned *allocateRandomIntegerArray(unsigned count) {
-	unsigned *array = malloc(count * sizeof(unsigned));
-	
-	populateRandomIntegerArray(array, count);
-	
-	return array;
-}
-
-void populateStabilityTestingRandomIntegerArray(unsigned *array, unsigned count) {
-	unsigned index, small = count / (count > 256 ? 256 : 16) + 1;
-	
-	populateRandomIntegerArray(array, small);
-	
-	for ( index = 0 ; index < count ; ++index ) {
-		array[index] = (array[index % small] & ~0x00FF) | (index / small & 0x00FF);
-	}
-}
-
-unsigned *allocateStabilityTestingRandomIntegerArray(unsigned count) {
-	unsigned *array = malloc(count * sizeof(unsigned));
-	
-	populateStabilityTestingRandomIntegerArray(array, count);
-	
-	return array;
-}
-
-char **allocateRandomStringArray(unsigned count, unsigned length) {
-	void *array = malloc(count * (sizeof(char *) + length + 1));
-	char *stringData = array + count * sizeof(char *);
-	char **strings = array;
-	char *characters = " abcdefghijklmnopqrstuvwxyz";
-	unsigned charactersLength = 27;
-	size_t index, bytes = count * (length + 1);
-	
-	for ( index = 0 ; index < bytes ; ++index ) {
-		stringData[index] = characters[arc4random_uniform(charactersLength)];
-	}
-	
-	for ( index = 0 ; index < count ; ++index ) {
-		strings[index] = stringData + index * (length + 1);
-		strings[index][length] = 0;
-	}
-	
-	return array;
-}
-
-void sortingStatisticsDisplay(char const *name, struct SortingStatistics *statistics) {
-	if ( statistics ) {
-		double seconds = (double)(statistics->timerEnded - statistics->timerBegan) / 1000000.0;
-		printf("%25s %9lu < %9lu = %8.4f @ %9lu () \n", name, statistics->comparisons, statistics->assignments, seconds, statistics->invocations);
-	}
-}
-
-void sortingComparison(void const *original, size_t count, size_t size, Compare compare, void *context, Compare stableCompare, void *stableContext) {
-	long timeSum, timeBest;
-	long trial, repetitions = 3;
-	struct SortingStatistics s = {};
-	size_t bytes = (count > 4 ? count : 4) * size;
-	bytes += -bytes & 0x00FF;
-	void *buffer = malloc(bytes * 2);
-	void *array = buffer + bytes;
-	
-	if ( !buffer ) {
-		printf("•• buffer %lu not allocated\n", bytes * 2);
-		return;
-	}
-	
-	if ( count < 50000 ) {
-		for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
-			memcpy(array, original, count * size);
-			sortingStatisticsReset(&s);
-			binaryInsertionSort(array, count, size, 1, buffer, &s, compare, context);
-			sortingStatisticsEnded(&s);
-			timeSum += s.timerEnded - s.timerBegan;
-			if ( s.timerEnded - s.timerBegan < timeBest ) { timeBest = s.timerEnded - s.timerBegan; }
-		}
-		s.timerEnded = s.timerBegan + timeBest;//timeSum / repetitions;
-		sortingStatisticsDisplay("binaryInsertionSort", &s);
-		if ( !isAscending(array, count, size, compare, context) ) {
-			printf("•• binaryInsertionSort not ascending\n");
-		} else if ( stableCompare && !isAscending(array, count, size, stableCompare, stableContext) ) {
-			printf("•• binaryInsertionSort not stable\n");
-		}
-	}
-	
-	for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
-		memcpy(array, original, count * size);
-		sortingStatisticsReset(&s);
-		quickSort(array, count, size, buffer, &s, compare, context);
-		sortingStatisticsEnded(&s);
-		timeSum += s.timerEnded - s.timerBegan;
-		if ( s.timerEnded - s.timerBegan < timeBest ) { timeBest = s.timerEnded - s.timerBegan; }
-	}
-	s.timerEnded = s.timerBegan + timeBest;//timeSum / repetitions;
-	sortingStatisticsDisplay("~=~ quickSort", &s);
-	if ( !isAscending(array, count, size, compare, context) ) {
-		printf("•• quickSort not ascending\n");
-	}
-	
-	if ( 0 ) {
-		for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
-			memcpy(array, original, count * size);
-			sortingStatisticsReset(&s);
-			balancingQuickSort(array, count, size, 0, buffer, &s, compare, context);
-			sortingStatisticsEnded(&s);
-			timeSum += s.timerEnded - s.timerBegan;
-			if ( s.timerEnded - s.timerBegan < timeBest ) { timeBest = s.timerEnded - s.timerBegan; }
-		}
-		s.timerEnded = s.timerBegan + timeBest;//timeSum / repetitions;
-		sortingStatisticsDisplay("~=~ balancingQuickSort", &s);
-		if ( !isAscending(array, count, size, compare, context) ) {
-			printf("•• balancingQuickSort not ascending\n");
-		}
-	}
-	
-	for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
-		memcpy(array, original, count * size);
-		sortingStatisticsReset(&s);
-		mergeSort(array, count, size, buffer, bytes, &s, compare, context);
-		sortingStatisticsEnded(&s);
-		timeSum += s.timerEnded - s.timerBegan;
-		if ( s.timerEnded - s.timerBegan < timeBest ) { timeBest = s.timerEnded - s.timerBegan; }
-	}
-	s.timerEnded = s.timerBegan + timeBest;//timeSum / repetitions;
-	sortingStatisticsDisplay("mergeSort", &s);
-	if ( !isAscending(array, count, size, compare, context) ) {
-		printf("•• mergeSort not ascending\n");
-	} else if ( stableCompare && !isAscending(array, count, size, stableCompare, stableContext) ) {
-		printf("•• mergeSort not stable\n");
-	}
-	
-	if ( count < 50000 ) {
-		for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
-			memcpy(array, original, count * size);
-			sortingStatisticsReset(&s);
-			mergeSort(array, count, size, buffer, size, &s, compare, context);
-			sortingStatisticsEnded(&s);
-			timeSum += s.timerEnded - s.timerBegan;
-			if ( s.timerEnded - s.timerBegan < timeBest ) { timeBest = s.timerEnded - s.timerBegan; }
-		}
-		s.timerEnded = s.timerBegan + timeBest;//timeSum / repetitions;
-		sortingStatisticsDisplay("inPlaceMergeSort", &s);
-		if ( !isAscending(array, count, size, compare, context) ) {
-			printf("•• inPlaceMergeSort not ascending\n");
-		} else if ( stableCompare && !isAscending(array, count, size, stableCompare, stableContext) ) {
-			printf("•• inPlaceMergeSort not stable\n");
-		}
-	}
-	
-	for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
-		memcpy(array, original, count * size);
-		sortingStatisticsReset(&s);
-		seriesMergeSort(array, count, size, buffer, bytes, &s, compare, context);
-		sortingStatisticsEnded(&s);
-		timeSum += s.timerEnded - s.timerBegan;
-		if ( s.timerEnded - s.timerBegan < timeBest ) { timeBest = s.timerEnded - s.timerBegan; }
-	}
-	s.timerEnded = s.timerBegan + timeBest;//timeSum / repetitions;
-	sortingStatisticsDisplay("seriesMergeSort", &s);
-	if ( !isAscending(array, count, size, compare, context) ) {
-		printf("•• seriesMergeSort not ascending\n");
-	} else if ( stableCompare && !isAscending(array, count, size, stableCompare, stableContext) ) {
-		printf("•• seriesMergeSort not stable\n");
-	}
-	
-	for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
-		memcpy(array, original, count * size);
-		sortingStatisticsReset(&s);
-		heapSort(array, count, size, buffer, &s, compare, context);
-		sortingStatisticsEnded(&s);
-		timeSum += s.timerEnded - s.timerBegan;
-		if ( s.timerEnded - s.timerBegan < timeBest ) { timeBest = s.timerEnded - s.timerBegan; }
-	}
-	s.timerEnded = s.timerBegan + timeBest;//timeSum / repetitions;
-	sortingStatisticsDisplay("~=~ heapSort", &s);
-	if ( !isAscending(array, count, size, compare, context) ) {
-		printf("•• heapSort not ascending\n");
-//	} else if ( stableCompare && !isAscending(array, count, size, stableCompare, stableContext) ) {
-//		printf("•• heapSort not stable\n");
-	}
-	
-	free(buffer);
-}
-
-void sortingTest() {
-	void *array;
-	unsigned index, count, tooth, teeth = 50;
-	unsigned integerArray[] = {6, 3, 5, 99, 44, 37, 9, 66, 15, 69, 85, 1, 57, 19, 22, 98, 24, 73, 11, 13, 7, 42, 17, 23};
-	char const *stringArray[] = {"dog", "cat", "elk", "bat", "fox", "ape", "red", "orange", "yellow", "green", "blue", "indigo", "violet", "azure", "viridian", "cerulean", "teal", "sepia", "umber", "cerise", "sienna", "crimson", "periwinkle"};
-	unsigned integerArrayCounts[] = {101, 1009, 10007, 100003, 1000003, 4000037};
-	unsigned integerArrayCount = countof(integerArrayCounts);
-	unsigned stringArrayCounts[] = {101, 1009, 10007, 100003, 1000003};
-	unsigned stringArrayCount = countof(stringArrayCounts);
-	unsigned scratch;
-	
-	printf("-- sort small known integerArray %lu\n", countof(integerArray));
-	sortingComparison(integerArray, countof(integerArray), sizeof(integerArray[0]), (Compare *)compareUnsigned, NULL, NULL, NULL);
-	
-	printf("-- sort small known stringArray %lu\n", countof(stringArray));
-	sortingComparison(stringArray, countof(stringArray), sizeof(stringArray[0]), (Compare *)compareString, NULL, NULL, NULL);
-	
-	for ( index = 3 ; index < 4 ; ++index ) {
-		count = integerArrayCounts[index];
-		array = allocateRandomIntegerArray(count);
-		quickSort(array, count, sizeof(unsigned), &scratch, NULL, (Compare *)compareUnsigned, NULL);
-		printf("-- sort ascending unsigned array %u\n", count);
-		sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-		reverse(array, count, sizeof(unsigned), &scratch, NULL);
-		printf("-- sort descending unsigned array %u\n", count);
-		sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-		
-		if ( count > teeth * 4 ) {
-			for ( tooth = 0 ; tooth < teeth ; ++tooth ) {
-				reverse(array + tooth * sizeof(unsigned) * count / teeth, count / 2 / teeth, sizeof(unsigned), &scratch, NULL);
-			}
-			
-			printf("-- sort oscillating unsigned array %u\n", count);
-			sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-			
-			reverse(array, count, sizeof(unsigned), &scratch, NULL);
-			printf("-- sort reversed oscillating unsigned array %u\n", count);
-			sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-			
-			reverse(array, count, sizeof(unsigned), &scratch, NULL);
-			for ( tooth = 0 ; tooth < teeth ; ++tooth ) {
-				populateRandomIntegerArray(array + tooth * sizeof(unsigned) * count / teeth, count / 2 / teeth);
-			}
-			
-			printf("-- sort alternating random and ascending unsigned array %u\n", count);
-			sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-			
-			reverse(array, count, sizeof(unsigned), &scratch, NULL);
-			printf("-- sort alternating random and descending unsigned array %u\n", count);
-			sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-		}
-		
-		tooth = count / 4;
-		quickSort(array, count, sizeof(unsigned), &scratch, NULL, (Compare *)compareUnsigned, NULL);
-		populateRandomIntegerArray(array + (count - tooth), tooth);
-		printf("-- sort lead 3/4 ascending unsigned array %u\n", count);
-		sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-		
-		populateRandomIntegerArray(array, tooth);
-		printf("-- sort middle 1/2 ascending unsigned array %u\n", count);
-		sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-		
-		quickSort(array, count - tooth, sizeof(unsigned), &scratch, NULL, (Compare *)compareUnsigned, NULL);
-		printf("-- sort tail 3/4 ascending unsigned array %u\n", count);
-		sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-		
-		reverse(array, count, sizeof(unsigned), &scratch, NULL);
-		printf("-- sort lead 3/4 descending unsigned array %u\n", count);
-		sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-		
-		populateStabilityTestingRandomIntegerArray(array, count);
-		printf("-- sort stability testing unsigned array %u\n", count);
-		sortingComparison(array, count, sizeof(unsigned), (Compare *)compareStabilityTestingUnsigned, NULL, (Compare *)compareUnsigned, NULL);
-		
-		free(array);
-	}
-	
-	for ( index = 0 ; index < stringArrayCount ; ++index ) {
-		count = stringArrayCounts[index];
-		array = allocateRandomStringArray(count, 20);
-		printf("-- sort random string array %u (n ln n = %.0f)\n", count, log((double)count) * (double)count);
-		sortingComparison(array, count, sizeof(char *), (Compare *)compareString, NULL, NULL, NULL);
-		free(array);
-	}
-	
-	for ( index = 0 ; index < integerArrayCount ; ++index ) {
-		count = integerArrayCounts[index];
-		array = allocateRandomIntegerArray(count);
-		printf("-- sort random unsigned array %u (n ln n = %.0f)\n", count, log((double)count) * (double)count);
-		sortingComparison(array, count, sizeof(unsigned), (Compare *)compareUnsigned, NULL, NULL, NULL);
-		free(array);
 	}
 }
