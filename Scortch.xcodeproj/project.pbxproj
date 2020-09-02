@@ -28,6 +28,7 @@
 		070BB35F24DF1FFB0058F74C /* main.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
 		070BB36624DF201E0058F74C /* sort.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = sort.h; sourceTree = "<group>"; };
 		070BB36724DF201E0058F74C /* sort.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = sort.c; sourceTree = "<group>"; };
+		07ECA08624FDBC3400B28FFC /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -45,6 +46,7 @@
 			isa = PBXGroup;
 			children = (
 				070BB35E24DF1FFB0058F74C /* Scortch */,
+				07ECA08624FDBC3400B28FFC /* README.md */,
 				070BB35D24DF1FFB0058F74C /* Products */,
 			);
 			sourceTree = "<group>";

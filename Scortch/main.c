@@ -13,6 +13,8 @@
 #include <sys/time.h>
 #include "sort.h"
 
+#define LESSRANDOM 1
+
 #ifndef LONG_MAX
 #define LONG_MAX ((long)(~0UL >> 1))
 #endif
@@ -53,6 +55,24 @@ void sortingStatisticsBegin(struct SortingStatistics *statistics) {
 
 void sortingStatisticsEnded(struct SortingStatistics *statistics) {
 	statistics->timerEnded = microsecondsSince1970();
+}
+
+//	MARK: - Random
+
+uint32_t randomValue() {
+#if LESSRANDOM
+	return (uint32_t)random();
+#else
+	return arc4random();
+#endif
+}
+
+uint32_t randomValueUniform(uint32_t limit) {
+#if LESSRANDOM
+	return random() % limit;
+#else
+	return arc4random_uniform(limit);
+#endif
 }
 
 //	MARK: - Testing
@@ -115,7 +135,7 @@ void populateRandomIntegerArray(unsigned *array, unsigned count) {
 	limit = count - limit;
 	
 	for ( index = 0 ; index < count ; ++index ) {
-		array[index] = arc4random_uniform(limit);
+		array[index] = randomValueUniform(limit);
 	}
 }
 
@@ -149,29 +169,29 @@ void populateIntegerArray(unsigned *array, unsigned count, unsigned length, unsi
 			break;
 		
 		case 1:	//	equal
-			if ( prior != order ) { value = 1 + arc4random_uniform(count); }
+			if ( prior != order ) { value = 1 + randomValueUniform(count); }
 			
 			for ( ; index < limit ; ++index ) { array[index] = value; }
 			break;
 		
 		case 2:	//	ascending
-			if ( prior != order ) { value = 1 + arc4random_uniform(count); }
+			if ( prior != order ) { value = 1 + randomValueUniform(count); }
 			
-			for ( ; index < limit ; ++index ) { array[index] = value; value += arc4random_uniform(step); }
+			for ( ; index < limit ; ++index ) { array[index] = value; value += randomValueUniform(step); }
 			break;
 		
 		case 3:	//	descending
-			if ( prior != order ) { value = arc4random_uniform(count) + step * (limit - index); }
+			if ( prior != order ) { value = randomValueUniform(count) + step * (limit - index); }
 			
-			for ( ; index < limit ; ++index ) { array[index] = value; value -= arc4random_uniform(step); }
+			for ( ; index < limit ; ++index ) { array[index] = value; value -= randomValueUniform(step); }
 			break;
 		
 		case 4:	//	random
-			for ( ; index < limit ; ++index ) { array[index] = arc4random(); }
+			for ( ; index < limit ; ++index ) { array[index] = randomValue(); }
 			break;
 		
 		case 5:	//	random limited to count - √count
-			for ( ; index < limit ; ++index ) { array[index] = 1 + arc4random_uniform(range); }
+			for ( ; index < limit ; ++index ) { array[index] = 1 + randomValueUniform(range); }
 			break;
 		
 		case 6:	//	runless random
@@ -179,9 +199,9 @@ void populateIntegerArray(unsigned *array, unsigned count, unsigned length, unsi
 			
 			for ( ; index < limit ; ++index ) {
 				if ( index & 1 ) {
-					value = ~arc4random_uniform(~value);
+					value = ~randomValueUniform(~value);
 				} else {
-					value = 1 + arc4random_uniform(value - 1);
+					value = 1 + randomValueUniform(value - 1);
 				}
 				
 				array[index] = value;
@@ -193,9 +213,9 @@ void populateIntegerArray(unsigned *array, unsigned count, unsigned length, unsi
 			
 			for ( ; index < limit ; ++index ) {
 				if ( index & 1 ) {
-					value = range - arc4random_uniform(range - value);
+					value = range - randomValueUniform(range - value);
 				} else {
-					value = 1 + arc4random_uniform(value - 1);
+					value = 1 + randomValueUniform(value - 1);
 				}
 				
 				array[index] = value;
@@ -231,7 +251,7 @@ void populateStabilityTestingRandomIntegerArray(unsigned *array, unsigned count)
 	unsigned index, small = count / (count > 256 ? 256 : 16) + 1;
 	
 	for ( index = 0 ; index < small ; ++index ) {
-		array[index] = arc4random();
+		array[index] = randomValue();
 	}
 	
 	for ( index = 0 ; index < count ; ++index ) {
@@ -261,7 +281,7 @@ char **allocateRandomStringArray(unsigned count, unsigned length, unsigned sameP
 		if ( characterIndex < samePrefix && characterIndex + 1 < charactersLength ) {
 			characterIndex += 1;
 		} else {
-			characterIndex = arc4random_uniform(charactersLength);
+			characterIndex = randomValueUniform(charactersLength);
 		}
 		
 		stringData[index] = characters[characterIndex];
@@ -413,6 +433,24 @@ void sortingComparison(void const *original, size_t count, size_t size, Compare 
 		printf("•• coleSort not stable\n");
 	}
 	
+	if ( 1 ) {
+		for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
+			memcpy(array, original, count * size);
+			sortingStatisticsReset(&s);
+			quadSort(array, buffer, count, size, &s, compare, context);
+			sortingStatisticsEnded(&s);
+			timeSum += s.timerEnded - s.timerBegan;
+			if ( s.timerEnded - s.timerBegan < timeBest ) { timeBest = s.timerEnded - s.timerBegan; }
+		}
+		s.timerEnded = s.timerBegan + timeBest;//timeSum / repetitions;
+		sortingStatisticsDisplay("quadSort", &s, count);
+		if ( !isAscending(array, count, size, compare, context) ) {
+			printf("•• quadSort not ascending\n");
+		} else if ( stableCompare && !isAscending(array, count, size, stableCompare, stableContext) ) {
+			printf("•• quadSort not stable\n");
+		}
+	}
+	
 	for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
 		memcpy(array, original, count * size);
 		sortingStatisticsReset(&s);
@@ -539,6 +577,14 @@ void sortingTest() {
 	unsigned integerArrayCount = countof(integerArrayCounts);
 	unsigned stringArrayCounts[] = {101, 1009, 10007, 100003, 1000003};
 	unsigned stringArrayCount = countof(stringArrayCounts);
+	
+#if LESSRANDOM
+	uint32_t seed = arc4random();
+	srandom(seed);
+	printf("random seed %u\n", seed);
+#else
+	printf("arc4random\n");
+#endif
 	
 	printf("-- sort small known integerArray %lu\n", countof(integerArray));
 	sortingComparison(integerArray, countof(integerArray), sizeof(integerArray[0]), (Compare *)compareUnsigned, NULL, NULL, NULL);

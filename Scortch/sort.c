@@ -4,6 +4,7 @@
 //
 //  Created by Eric Cole on 8/8/20.
 //  Copyright © 2020 Eric Cole. All rights reserved.
+//  eric x cole gmail com
 //
 
 #include <string.h>
@@ -434,10 +435,31 @@ void seriesMergeSort(void *array, size_t count, size_t size, void *buffer, size_
 
 //	MARK: - Four Sort
 
+void threeSort(void *array, size_t size, void *temporary, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	if ( invokeIsLess(array + size, array, statistics, compare, context) ) {
+		if ( invokeIsLess(array + 2 * size, array + size, statistics, compare, context) ) {
+			swapAt(array, 0, 2, size, temporary, statistics);
+		} else if ( invokeIsLess(array + 2 * size, array, statistics, compare, context) ) {
+			slideUp(array, 0, 2, size, temporary, statistics);
+		} else {
+			swapAt(array, 0, 1, size, temporary, statistics);
+		}
+	} else if ( invokeIsLess(array + 2 * size, array + size, statistics, compare, context) ) {
+		if ( invokeIsLess(array + 2 * size, array, statistics, compare, context) ) {
+			slideDown(array, 2, 0, size, temporary, statistics);
+		} else {
+			swapAt(array, 1, 2, size, temporary, statistics);
+		}
+	}
+}
+
 void fourSort(void *array, size_t size, void *buffer, struct SortingStatistics *statistics, Compare compare, void *context) {
 	if ( statistics ) {
 		statistics->invocations += 1;
-		statistics->accesses += 4;
 	}
 	
 	unsigned reverseLower = invokeIsLess(array + 1 * size, array + 0 * size, statistics, compare, context) ? 1 : 0;
@@ -493,24 +515,37 @@ void mergeIntoSorted(void const *unmerged, void *merged, size_t count, size_t sp
 		statistics->invocations += 1;
 	}
 	
-	size_t i, j, n;
+	if ( !(0 < split && split < count) ) {
+		assignManyAt(merged, 0, count, size, unmerged, statistics);
+		return;
+	}
 	
-	for ( i = 0, j = split, n = 0 ; i < split && j < count ; ++n ) {
-		if ( invokeIsLess(unmerged + j * size, unmerged + i * size, statistics, compare, context) ) {
-			assignAt(merged, n, size, unmerged + j * size, statistics);
+	size_t i, j;
+	const void *u = unmerged, *v = unmerged + split * size;
+	void *w = merged;
+	
+	for ( i = 0, j = split ;; ) {
+		if ( invokeIsLess(v, u, statistics, compare, context) ) {
 			j += 1;
+			assignAt(w, 0, size, v, statistics);
+			v += size;
+			w += size;
+			
+			if ( !(j < count) ) {
+				assignManyAt(w, 0, split - i, size, u, statistics);
+				break;
+			}
 		} else {
-			assignAt(merged, n, size, unmerged + i * size, statistics);
 			i += 1;
+			assignAt(w, 0, size, u, statistics);
+			u += size;
+			w += size;
+			
+			if ( !(i < split) ) {
+				assignManyAt(w, 0, count - j, size, v, statistics);
+				break;
+			}
 		}
-	}
-	
-	if ( i < split ) {
-		assignManyAt(merged, n, split - i, size, unmerged + i * size, statistics);
-	}
-	
-	if ( j < count ) {
-		assignManyAt(merged, n, count - j, size, unmerged + j * size, statistics);
 	}
 }
 
@@ -645,23 +680,36 @@ void mergeFourSort(void *array, void *buffer, size_t count, size_t size, struct 
 
 ///	Bottom up merge sort that quadruples instead of doubles at each iteration
 void bottomUpMergeFourSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
-	size_t block, index, limit, width = 4;
-	
-	for ( index = 0 ; index + width <= count ; index += width ) {
-		fourSort(array + index * size, size, buffer, statistics, compare, context);
+	if ( statistics ) {
+		statistics->invocations += 1;
 	}
 	
-	if ( index + 1 < count ) {
-		binaryInsertionSort(array + index * size, count - index, size, 1, buffer, statistics, compare, context);
+	size_t block, index, limit, width = 4;
+	void *p;
+	
+	for ( index = 0, p = array ; index + width <= count ; index += width, p += width * size ) {
+		fourSort(p, size, buffer, statistics, compare, context);
+	}
+	
+	switch ( count % 4 ) {
+	case 2:
+		if ( invokeIsLess(p + size, p, statistics, compare, context) ) {
+			swapAt(p, 0, 1, size, buffer, statistics);
+		}
+		break;
+	
+	case 3:
+		threeSort(p, size, buffer, statistics, compare, context);
+		break;
 	}
 	
 	while ( width < count ) {
 		block = width * 4;
 		
-		for ( index = 0 ; index + width < count ; index += block ) {
+		for ( index = 0, p = array ; index + width < count ; index += block, p += block * size ) {
 			limit = count - index < block ? count - index : block;
 			
-			mergeFourSorted(array + index * size, buffer, limit, width, size, statistics, compare, context);
+			mergeFourSorted(p, buffer, limit, width, size, statistics, compare, context);
 		}
 		
 		width = block;
@@ -675,81 +723,93 @@ void coleMergeIntoSorted(void const *unmerged, void *merged, size_t count, size_
 		statistics->invocations += 1;
 	}
 	
+	if ( !(0 < split && split < count) ) {
+		assignManyAt(merged, 0, count, size, unmerged, statistics);
+		return;
+	}
+	
 	size_t i, j, m, n, o = count - split;
 	
-	if ( 0 < split && split < count ) {
-		//	small + large > small * log2(large)
-		//	+3 to avoid edge cases for very small values
-		
-		if ( (o + 3) >> (o / split) <= 1 ) {
-			for ( i = 0, j = split ; i < split ; ++i ) {
-				m = j;
-				n = count - 1;
+	//	small + large > small * log2(large)
+	//	+3 to avoid edge cases for very small values
+	
+	if ( (o + 3) >> (o / split) <= 1 ) {
+		for ( i = 0, j = split ; i < split ; ++i ) {
+			m = j;
+			n = count - 1;
+			
+			while ( m <= n ) {
+				o = (m + n) / 2;
 				
-				while ( m <= n ) {
-					o = (m + n) / 2;
-					
-					if ( invokeIsLess(unmerged + i * size, unmerged + o * size, statistics, compare, context) ) {
-						n = o - 1;
-					} else {
-						m = o + 1;
-					}
+				if ( invokeIsLess(unmerged + i * size, unmerged + o * size, statistics, compare, context) ) {
+					n = o - 1;
+				} else {
+					m = o + 1;
 				}
-				
-				assignManyAt(merged, i + j - split, m - j, size, unmerged + j * size, statistics);
-				assignAt(merged, i + m - split, size, unmerged + i * size, statistics);
-				
-				j = m;
 			}
 			
-			assignManyAt(merged, j, count - j, size, unmerged + j * size, statistics);
-			return;
+			assignManyAt(merged, i + j - split, m - j, size, unmerged + j * size, statistics);
+			assignAt(merged, i + m - split, size, unmerged + i * size, statistics);
+			
+			j = m;
 		}
 		
-		if ( (split + 3) >> (split / o) <= 1 ) {
-			for ( i = 0, j = split ; j < count ; ++j ) {
-				m = i + 1;
-				n = split;
-				
-				while ( m <= n ) {
-					o = (m + n) / 2 - 1;
-					
-					if ( invokeIsLess(unmerged + j * size, unmerged + o * size, statistics, compare, context) ) {
-						n = o;
-					} else {
-						m = o + 2;
-					}
-				}
-				
-				m -= 1;
-				
-				assignManyAt(merged, i + j - split, m - i, size, unmerged + i * size, statistics);
-				assignAt(merged, j + m - split, size, unmerged + j * size, statistics);
-				
-				i = m;
-			}
-			
-			assignManyAt(merged, count - split + i, split - i, size, unmerged + i * size, statistics);
-			return;
-		}
+		assignManyAt(merged, j, count - j, size, unmerged + j * size, statistics);
+		return;
 	}
 	
-	for ( i = 0, j = split, n = 0 ; i < split && j < count ; ++n ) {
-		if ( invokeIsLess(unmerged + j * size, unmerged + i * size, statistics, compare, context) ) {
-			assignAt(merged, n, size, unmerged + j * size, statistics);
+	if ( (split + 3) >> (split / o) <= 1 ) {
+		for ( i = 0, j = split ; j < count ; ++j ) {
+			m = i + 1;
+			n = split;
+			
+			while ( m <= n ) {
+				o = (m + n) / 2 - 1;
+				
+				if ( invokeIsLess(unmerged + j * size, unmerged + o * size, statistics, compare, context) ) {
+					n = o;
+				} else {
+					m = o + 2;
+				}
+			}
+			
+			m -= 1;
+			
+			assignManyAt(merged, i + j - split, m - i, size, unmerged + i * size, statistics);
+			assignAt(merged, j + m - split, size, unmerged + j * size, statistics);
+			
+			i = m;
+		}
+		
+		assignManyAt(merged, count - split + i, split - i, size, unmerged + i * size, statistics);
+		return;
+	}
+	
+	const void *u = unmerged, *v = unmerged + split * size;
+	void *w = merged;
+	
+	for ( i = 0, j = split ;; ) {
+		if ( invokeIsLess(v, u, statistics, compare, context) ) {
 			j += 1;
+			assignAt(w, 0, size, v, statistics);
+			v += size;
+			w += size;
+			
+			if ( !(j < count) ) {
+				assignManyAt(w, 0, split - i, size, u, statistics);
+				break;
+			}
 		} else {
-			assignAt(merged, n, size, unmerged + i * size, statistics);
 			i += 1;
+			assignAt(w, 0, size, u, statistics);
+			u += size;
+			w += size;
+			
+			if ( !(i < split) ) {
+				assignManyAt(w, 0, count - j, size, v, statistics);
+				break;
+			}
 		}
-	}
-	
-	if ( i < split ) {
-		assignManyAt(merged, n, split - i, size, unmerged + i * size, statistics);
-	}
-	
-	if ( j < count ) {
-		assignManyAt(merged, n, count - j, size, unmerged + j * size, statistics);
 	}
 }
 
@@ -795,9 +855,12 @@ size_t coleSeek(void *array, void *buffer, size_t count, size_t size, size_t min
 	size_t run = 0, sum = 0, seek, limit, equals;
 	unsigned i, isReversed;
 	signed c;
+	void *p;
 	
 	for ( i = 0 ; i < 4 && run + 1 < count ; ++i ) {
-		isReversed = invokeIsLess(array + (run + 1) * size, array + (run + 0) * size, statistics, compare, context);
+		p = array + run * size;
+		isReversed = invokeIsLess(p + size, p, statistics, compare, context);
+		p += 2 * size;
 		run += 2;
 		
 		if ( isReversed ) {
@@ -805,7 +868,7 @@ size_t coleSeek(void *array, void *buffer, size_t count, size_t size, size_t min
 			
 			while ( 1 ) {
 				if ( run < count ) {
-					c = invokeCompare(array + run * size, array + (run - 1) * size, statistics, compare, context);
+					c = invokeCompare(p, p - size, statistics, compare, context);
 				} else {
 					c = 1;
 				}
@@ -822,10 +885,12 @@ size_t coleSeek(void *array, void *buffer, size_t count, size_t size, size_t min
 					break;
 				}
 				
+				p += size;
 				run += 1;
 			}
 		} else {
-			while ( run < count && isReversed == invokeIsLess(array + run * size, array + (run - 1) * size, statistics, compare, context) ) {
+			while ( run < count && 0 == invokeIsLess(p, p - size, statistics, compare, context) ) {
+				p += size;
 				run += 1;
 			}
 		}
@@ -894,7 +959,7 @@ size_t coleSeek(void *array, void *buffer, size_t count, size_t size, size_t min
 
 ///	Merge sort that operates on four runs at a time, starting with natural ascending or descending runs
 void coleSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
-	if ( count < 16 ) {
+	if ( count < 8 ) {
 		binaryInsertionSort(array, count, size, 1, buffer, statistics, compare, context);
 		return;
 	}
@@ -1324,6 +1389,715 @@ void juggleMergeSort(void *array, void *buffer, size_t count, size_t size, unsig
 		void *merged = juggling ? buffer : array;
 		
 		mergeIntoSorted(unmerged, merged, count, half, size, statistics, compare, context);
+	}
+}
+
+//	MARK: - Quad Sort
+
+void quadSort_tail_merge(void *array, void *buffer, size_t count, size_t block, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	size_t offset;
+	void *pta, *pts, *c, *c_max, *d, *d_max, *e;
+	
+	pts = buffer;
+	
+	for ( ; block < count ; block *= 2 ) {
+		for ( offset = 0 ; offset + block < count ; offset += block * 2 ) {
+			pta = array + offset * size;
+			c_max = pta + block * size;
+			
+			if ( !invokeIsLess(c_max, c_max - size, statistics, compare, context) ) {
+				continue;
+			}
+			
+			if ( offset + block * 2 <= count ) {
+				d_max = pta + block * 2 * size;
+			} else {
+				d_max = array + count * size;
+			}
+			
+			if ( !invokeIsLess(pta + block * size, pta, statistics, compare, context) ) {
+				if ( offset + block * 2 <= count ) {
+					c_max = pts + block * size;
+				} else {
+					c_max = pts + (count - offset - block) * size;
+				}
+				
+				d = d_max - size;
+				e = pta + (block - 1) * size;
+				
+				//	e <= d
+				while ( !invokeIsLess(d, e, statistics, compare, context) ) {
+					d_max -= size;
+					d -= size;
+					c_max -= size;
+				}
+				
+				c = c_max - size;
+				
+				//while ( c >= pts + 8 ) { /* *c-- = *d--; x 8 */ }
+				//while ( c >= pts ) { /* *c-- = *d--; */ }
+				assignManyAt(c - (c - pts), 0, (c - pts) / size + 1, size, d - (c - pts), statistics);
+				
+				c = c_max - size;
+				d = pta + (block - 1) * size;
+				e = d_max - size;
+				
+				/* *e-- = *d-- */
+				assignAt(e, 0, size, d, statistics);
+				d -= size;
+				e -= size;
+				
+				while ( c >= pts ) {
+					/* d > c */
+					while ( invokeIsLess(c, d, statistics, compare, context) ) {
+						/* *e-- = *d-- */
+						assignAt(e, 0, size, d, statistics);
+						d -= size;
+						e -= size;
+					}
+					/* *e-- = *c-- */
+					assignAt(e, 0, size, c, statistics);
+					c -= size;
+					e -= size;
+				}
+			} else {
+				if ( offset + block * 2 <= count ) {
+					c_max = pts + block * size;
+				} else {
+					c_max = pts + (count - offset - block) * size;
+				}
+				
+				d = d_max - size;
+				e = pta + (block - 1) * size;
+				
+				//	e <= d
+				while ( !invokeIsLess(d, e, statistics, compare, context) ) {
+					d_max -= size;
+					d -= size;
+					c_max -= size;
+				}
+				
+				c = c_max - size;
+				
+				//while ( c >= pts + 8 ) { /* *c-- = *d--; x 8 */ }
+				//while ( c >= pts ) { /* *c-- = *d--; */ }
+				assignManyAt(c - (c - pts), 0, (c - pts) / size + 1, size, d - (c - pts), statistics);
+				
+				c = c_max - size;
+				d = pta + (block - 1) * size;
+				e = d_max - size;
+				
+				/* *e-- = *d-- */
+				assignAt(e, 0, size, d, statistics);
+				d -= size;
+				e -= size;
+				
+				while ( d >= pta ) {
+					/* d <= c */
+					while ( !invokeIsLess(c, d, statistics, compare, context) ) {
+						/* *e-- = *c-- */
+						assignAt(e, 0, size, c, statistics);
+						c -= size;
+						e -= size;
+					}
+					/* *e-- = *d-- */
+					assignAt(e, 0, size, d, statistics);
+					d -= size;
+					e -= size;
+				}
+				
+				while ( c >= pts ) {
+					/* *e-- = *c-- */
+					assignAt(e, 0, size, c, statistics);
+					c -= size;
+					e -= size;
+				}
+			}
+		}
+    }
+}
+
+void quadSort_tail_swap(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	unsigned i, j, cnt, max = (unsigned)count;
+	
+	switch ( max ) {
+	case 0: break;
+	case 1: break;
+	case 2:
+		if ( invokeIsLess(array + size, array, statistics, compare, context) ) {
+			swapAt(array, 0, 1, size, buffer, statistics);
+		}
+		break;
+	
+	case 3:
+		threeSort(array, size, buffer, statistics, compare, context);
+		break;
+	
+	case 4:
+		fourSort(array, size, buffer, statistics, compare, context);
+		break;
+	
+	case 5:
+	case 6:
+	case 7:
+	case 8:
+		polymergeFourSort(array, buffer, size, statistics, compare, context);
+		quadSort_tail_swap(array + 4 * size, buffer + 4 * size, count - 4, size, statistics, compare, context);
+		
+		for ( i = 0, j = 4, cnt = 0 ; i < 4 && j < max ; ++cnt ) {
+			if ( invokeIsLess(array + j * size, buffer + i * size, statistics, compare, context) ) {
+				assignAt(array, cnt, size, array + j * size, statistics);
+				j += 1;
+			} else {
+				assignAt(array, cnt, size, buffer + i * size, statistics);
+				i += 1;
+			}
+		}
+		
+		if ( i < 4 ) {
+			assignManyAt(array, cnt, 4 - i, size, buffer + i * size, statistics);
+		}
+		
+		break;
+	
+	default:
+		fourSort(array, size, buffer, statistics, compare, context);
+		fourSort(array + 4 * size, size, buffer, statistics, compare, context);
+		quadSort_tail_swap(array + 8 * size, buffer + 8 * size, count - 8, size, statistics, compare, context);
+		
+		if ( !invokeIsLess(array + 4 * size, array + 3 * size, statistics, compare, context) ) {
+			if ( !invokeIsLess(array + 8 * size, array + 7 * size, statistics, compare, context) ) {
+				return;
+			} else {
+				assignManyAt(buffer, 0, 8, size, array + 0 * size, statistics);
+			}
+		} else if ( invokeIsLess(array + 7 * size, array + 0 * size, statistics, compare, context) ) {
+			assignManyAt(buffer, 0, 4, size, array + 4 * size, statistics);
+			assignManyAt(buffer, 4, 4, size, array + 0 * size, statistics);
+		} else {
+			mergeIntoSorted(array, buffer, 8, 4, size, statistics, compare, context);
+		}
+		
+		for ( i = 0, j = 8, cnt = 0 ; i < 8 && j < max ; ++cnt ) {
+			if ( invokeIsLess(array + j * size, buffer + i * size, statistics, compare, context) ) {
+				assignAt(array, cnt, size, array + j * size, statistics);
+				j += 1;
+			} else {
+				assignAt(array, cnt, size, buffer + i * size, statistics);
+				i += 1;
+			}
+		}
+		
+		if ( i < 8 ) {
+			assignManyAt(array, cnt, 8 - i, size, buffer + i * size, statistics);
+		}
+		break;
+	}
+}
+
+void quadSort_quad_merge(void *array, void *buffer, size_t count, size_t block, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	size_t offset;
+	void *pta, *pts, *c, *c_max, *d, *d_max;
+	
+	for ( ; block * 8 < count ; block *= 4 ) {
+		for ( offset = 0 ; offset + block * 4 <= count ; offset += block * 4 ) {
+			pta = array + offset * size;
+			c_max = pta + block * size;
+			
+			if ( !invokeIsLess(c_max - 0 * size, c_max - 1 * size, statistics, compare, context) ) {
+				c_max = pta + 3 * block * size;
+				
+				if ( !invokeIsLess(c_max - 0 * size, c_max - 1 * size, statistics, compare, context) ) {
+					c_max = pta + 2 * block * size;
+					
+					if ( !invokeIsLess(c_max - 0 * size, c_max - 1 * size, statistics, compare, context) ) {
+						continue;
+					}
+					
+					pts = buffer;
+					c = pta;
+					
+					//while ( c < c_max - 8 ) { /* *pts++ = *c++; x 8 */ }
+					//while ( c < c_max ) { /* *pts++ = *c++; */ }
+					assignManyAt(pts, 0, (c_max - c) / size, size, c, statistics);
+					pts += c_max - c;
+					
+					c = c_max;
+					c_max = c + 2 * block * size;
+					
+					//while ( c < c_max - 8 ) { /* *pts++ = *c++; x 8 */ }
+					//while ( c < c_max ) { /* *pts++ = *c++; */ }
+					assignManyAt(pts, 0, (c_max - c) / size, size, c, statistics);
+					pts += c_max - c;
+					
+					goto step_3;
+				}
+				
+				pts = buffer;
+				c = pta;
+				c_max = c + 2 * block * size;
+				
+				//while ( c < c_max ) { /* *pts++ = *c++; */ }
+				assignManyAt(pts, 0, (c_max - c) / size, size, c, statistics);
+				pts += c_max - c;
+				
+				goto step_2;
+			}
+			
+			step_1:
+			
+			pts = buffer;
+			c = pta;
+			d = c_max;
+			d_max = d + block * size;
+			
+			if ( !invokeIsLess(d_max - 1 * size, c_max - 1 * size, statistics, compare, context) ) {
+				while ( c < c_max ) {
+					while ( invokeIsLess(d, c, statistics, compare, context) ) {
+						assignAt(pts, 0, size, d, statistics);
+						pts += size;
+						d += size;
+					}
+					assignAt(pts, 0, size, c, statistics);
+					pts += size;
+					c += size;
+				}
+				
+				if ( d < d_max ) {
+					assignManyAt(pts, 0, (d_max - d) / size, size, d, statistics);
+					pts += d_max - d;
+				}
+			} else {
+				while ( d < d_max ) {
+					while ( !invokeIsLess(d, c, statistics, compare, context) ) {
+						assignAt(pts, 0, size, c, statistics);
+						pts += size;
+						c += size;
+					}
+					assignAt(pts, 0, size, d, statistics);
+					pts += size;
+					d += size;
+				}
+				
+				if ( c < c_max ) {
+					assignManyAt(pts, 0, (c_max - c) / size, size, c, statistics);
+					pts += c_max - c;
+				}
+			}
+			
+			step_2:
+			
+			c = pta + 2 * block * size;
+			c_max = c + block * size;
+			d = c_max;
+			d_max = d + block * size;
+			
+			if ( !invokeIsLess(d_max - 1 * size, c_max - 1 * size, statistics, compare, context) ) {
+				while ( c < c_max ) {
+					while ( invokeIsLess(d, c, statistics, compare, context) ) {
+						assignAt(pts, 0, size, d, statistics);
+						pts += size;
+						d += size;
+					}
+					assignAt(pts, 0, size, c, statistics);
+					pts += size;
+					c += size;
+				}
+				
+				if ( d < d_max ) {
+					assignManyAt(pts, 0, (d_max - d) / size, size, d, statistics);
+					pts += d_max - d;
+				}
+			} else {
+				while ( d < d_max ) {
+					while ( !invokeIsLess(d, c, statistics, compare, context) ) {
+						assignAt(pts, 0, size, c, statistics);
+						pts += size;
+						c += size;
+					}
+					assignAt(pts, 0, size, d, statistics);
+					pts += size;
+					d += size;
+				}
+				
+				if ( c < c_max ) {
+					assignManyAt(pts, 0, (c_max - c) / size, size, c, statistics);
+					pts += c_max - c;
+				}
+			}
+			
+			step_3:
+			
+			pts = buffer;
+			c = pts;
+			c_max = c + 2 * block * size;
+			d = c_max;
+			d_max = d + 2 * block * size;
+			
+			if ( !invokeIsLess(d_max - 1 * size, c_max - 1 * size, statistics, compare, context) ) {
+				while ( c < c_max ) {
+					while ( invokeIsLess(d, c, statistics, compare, context) ) {
+						assignAt(pta, 0, size, d, statistics);
+						pta += size;
+						d += size;
+					}
+					assignAt(pta, 0, size, c, statistics);
+					pta += size;
+					c += size;
+				}
+				
+				if ( d < d_max ) {
+					assignManyAt(pta, 0, (d_max - d) / size, size, d, statistics);
+					pta += d_max - d;
+				}
+			} else {
+				while ( d < d_max ) {
+					while ( !invokeIsLess(d, c, statistics, compare, context) ) {
+						assignAt(pta, 0, size, c, statistics);
+						pta += size;
+						c += size;
+					}
+					assignAt(pta, 0, size, d, statistics);
+					pta += size;
+					d += size;
+				}
+				
+				if ( c < c_max ) {
+					assignManyAt(pta, 0, (c_max - c) / size, size, c, statistics);
+					pta += c_max - c;
+				}
+			}
+		}
+		
+		quadSort_tail_merge(array + offset * size, buffer, count - offset, block, size, statistics, compare, context);
+	}
+	
+	quadSort_tail_merge(array, buffer, count, block, size, statistics, compare, context);
+}
+
+unsigned quadSort_quad_swap(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( statistics ) {
+		statistics->invocations += 1;
+	}
+	
+	size_t offset, i;
+	void *pta, *pts, *ptt, *pte;
+	
+	offset = 0;
+	pta = array;
+	pte = array + (count - 4) * size;
+	
+	while ( pta <= pte ) {
+		if ( invokeIsLess(pta + 1 * size, pta + 0 * size, statistics, compare, context) ) {
+			if ( invokeIsLess(pta + 3 * size, pta + 2 * size, statistics, compare, context) ) {
+				if ( invokeIsLess(pta + 2 * size, pta + 1 * size, statistics, compare, context) ) {
+					pts = pta;
+					pta += 4 * size;
+					goto swapper;
+				}
+				
+				swapAt(pta, 2, 3, size, buffer, statistics);
+			}
+			
+			swapAt(pta, 0, 1, size, buffer, statistics);
+		} else if ( invokeIsLess(pta + 3 * size, pta + 2 * size, statistics, compare, context) ) {
+			swapAt(pta, 2, 3, size, buffer, statistics);
+		}
+		
+		if ( invokeIsLess(pta + 2 * size, pta + 1 * size, statistics, compare, context) ) {
+			if ( !invokeIsLess(pta + 2 * size, pta + 0 * size, statistics, compare, context) ) {
+				if ( !invokeIsLess(pta + 3 * size, pta + 1 * size, statistics, compare, context) ) {
+					swapAt(pta, 1, 2, size, buffer, statistics);
+				} else {
+					slideUp(pta, 1, 3, size, buffer, statistics);
+				}
+			} else if ( invokeIsLess(pta + 3 * size, pta + 0 * size, statistics, compare, context) ) {
+				swapAt(pta, 0, 2, size, buffer, statistics);
+				swapAt(pta, 1, 3, size, buffer, statistics);
+			} else if ( !invokeIsLess(pta + 3 * size, pta + 1 * size, statistics, compare, context) ) {
+				slideDown(pta, 2, 0, size, buffer, statistics);
+			} else {
+				//	t=0, 0=2, 2=3, 3=1, 1=t
+				swapAt(pta, 0, 2, size, buffer, statistics);
+				swapAt(pta, 1, 3, size, buffer, statistics);
+				swapAt(pta, 1, 2, size, buffer, statistics);
+			}
+		}
+		
+		pta += 4 * size;
+		continue;
+		
+		swapper:
+		
+		if ( pta <= pte ) {
+			if ( invokeIsLess(pta + 1 * size, pta + 0 * size, statistics, compare, context) ) {
+				if ( invokeIsLess(pta + 3 * size, pta + 2 * size, statistics, compare, context) ) {
+					if ( invokeIsLess(pta + 2 * size, pta + 1 * size, statistics, compare, context) ) {
+						if ( invokeIsLess(pta + 0 * size, pta - 1 * size, statistics, compare, context) ) {
+							pta += 4 * size;
+							goto swapper;
+						}
+					}
+					swapAt(pta, 2, 3, size, buffer, statistics);
+				}
+				swapAt(pta, 0, 1, size, buffer, statistics);
+			} else if ( invokeIsLess(pta + 3 * size, pta + 2 * size, statistics, compare, context) ) {
+				swapAt(pta, 2, 3, size, buffer, statistics);
+			}
+			
+			if ( invokeIsLess(pta + 2 * size, pta + 1 * size, statistics, compare, context) ) {
+				if ( !invokeIsLess(pta + 2 * size, pta + 0 * size, statistics, compare, context) ) {
+					if ( !invokeIsLess(pta + 3 * size, pta + 1 * size, statistics, compare, context) ) {
+						swapAt(pta, 1, 2, size, buffer, statistics);
+					} else {
+						slideUp(pta, 1, 3, size, buffer, statistics);
+					}
+				} else if ( invokeIsLess(pta + 3 * size, pta + 0 * size, statistics, compare, context) ) {
+					swapAt(pta, 0, 2, size, buffer, statistics);
+					swapAt(pta, 1, 3, size, buffer, statistics);
+				} else if ( !invokeIsLess(pta + 3 * size, pta + 1 * size, statistics, compare, context) ) {
+					slideDown(pta, 2, 0, size, buffer, statistics);
+				} else {
+					//	t=0, 0=2, 2=3, 3=1, 1=t
+					swapAt(pta, 0, 2, size, buffer, statistics);
+					swapAt(pta, 1, 3, size, buffer, statistics);
+					swapAt(pta, 1, 2, size, buffer, statistics);
+				}
+			}
+			
+			if ( pts == array ) {
+				offset = (pta - pts) / (16 * size) * 16;
+			}
+			
+			ptt = pta - size;
+			pta += 4 * size;
+		} else {
+			if ( pts == array ) {
+				switch ( count % 4 ) {
+				case 3:
+					if ( !invokeIsLess(pta + 3 * size, pta + 2 * size, statistics, compare, context) ) {
+						offset = (pta - pts) / (16 * size) * 16;
+						break;
+					}
+				case 2:
+					if ( !invokeIsLess(pta + 2 * size, pta + 1 * size, statistics, compare, context) ) {
+						offset = (pta - pts) / (16 * size) * 16;
+						break;
+					}
+				case 1:
+					if ( !invokeIsLess(pta + 1 * size, pta + 0 * size, statistics, compare, context) ) {
+						offset = (pta - pts) / (16 * size) * 16;
+						break;
+					}
+				case 0:
+					goto swapped;
+					break;
+				}
+			}
+			
+			ptt = pta - size;
+		}
+		
+		reverse(pts, (ptt - pts) / size + 1, size, buffer, statistics);
+		continue;
+		
+		swapped:
+		
+		reverse(pts, count, size, buffer, statistics);
+		return 1;
+	}
+	
+	switch ( count % 4 ) {
+	case 0:
+		break;
+	
+	case 1:
+		break;
+	
+	case 2:
+		if ( invokeIsLess(pta + size, pta, statistics, compare, context) ) {
+			swapAt(pta, 0, 1, size, buffer, statistics);
+		}
+		break;
+	
+	case 3:
+		threeSort(pta, size, buffer, statistics, compare, context);
+		break;
+	}
+	
+	pta = array + offset * size;
+	pte = pta;
+	
+	for ( i = (count - offset) / 16 ; i > 0 ; --i, pte += 16 * size ) {
+		if ( !invokeIsLess(pta + 4 * size, pta + 3 * size, statistics, compare, context) ) {
+			if ( !invokeIsLess(pta + 12 * size, pta + 11 * size, statistics, compare, context) ) {
+				if ( !invokeIsLess(pta + 8 * size, pta + 7 * size, statistics, compare, context) ) {
+					pta += 16 * size;
+					continue;
+				}
+				
+				pts = buffer;
+				assignManyAt(pts, 0, 16, size, pta, statistics);
+				pts += 16 * size;
+				pta += 16 * size;
+				
+				goto step_3;
+			}
+			
+			pts = buffer;
+			assignManyAt(pts, 0, 8, size, pta, statistics);
+			pts += 8 * size;
+			pta += 8 * size;
+			
+			goto step_2;
+		}
+		
+		step_1:
+		
+		pts = buffer;
+		if ( !invokeIsLess(pta + 7 * size, pta + 3 * size, statistics, compare, context) ) {
+			mergeIntoSorted(pta, pts, 8, 4, size, statistics, compare, context);
+			pta += 8 * size;
+			pts += 8 * size;
+			ptt = pta;
+		} else if ( invokeIsLess(pta + 7 * size, pta + 0 * size, statistics, compare, context) ) {
+			assignManyAt(pts, 0, 4, size, pta + 4 * size, statistics);
+			assignManyAt(pts, 4, 4, size, pta + 0 * size, statistics);
+			pta += 8 * size;
+			pts += 8 * size;
+			ptt = pta;
+		} else {
+			mergeIntoSorted(pta, pts, 8, 4, size, statistics, compare, context);
+			pta += 8 * size;
+			pts += 8 * size;
+			ptt = pta;
+		}
+		
+		if ( !invokeIsLess(pta + 4 * size, pta + 3 * size, statistics, compare, context) ) {
+			ptt = pta;
+			pts = buffer;
+			pta = pte;
+			
+			if ( !invokeIsLess(ptt + 0 * size, pts + 7 * size, statistics, compare, context) ) {
+				assignManyAt(pta, 0, 8, size, pts, statistics);
+				pta += 16 * size;
+			} else if ( !invokeIsLess(ptt + 7 * size, pts + 7 * size, statistics, compare, context) ) {
+				while ( pts < buffer + 8 * size ) {
+					if ( invokeIsLess(ptt, pts, statistics, compare, context) ) {
+						assignAt(pta, 0, size, ptt, statistics);
+						ptt += size;
+					} else {
+						assignAt(pta, 0, size, pts, statistics);
+						pts += size;
+					}
+					pta += size;
+				}
+				
+				pta = pte + 16 * size;
+			} else if ( invokeIsLess(ptt + 7 * size, pts + 0 * size, statistics, compare, context) ) {
+				assignManyAt(pta, 0, 8, size, ptt, statistics);
+				assignManyAt(pta, 8, 8, size, pts, statistics);
+				pta += 16 * size;
+				pts += 8 * size;
+				ptt += 8 * size;
+			} else {
+				while ( ptt < pte + 16 * size ) {
+					if ( invokeIsLess(ptt, pts, statistics, compare, context) ) {
+						assignAt(pta, 0, size, ptt, statistics);
+						ptt += size;
+					} else {
+						assignAt(pta, 0, size, pts, statistics);
+						pts += size;
+					}
+					pta += size;
+				}
+				
+				while ( pts < buffer + 8 * size ) {
+					assignAt(pta, 0, size, pts, statistics);
+					pts += size;
+					pta += size;
+				}
+			}
+			
+			continue;
+		}
+		
+		step_2:
+		
+		if ( !invokeIsLess(pta + 7 * size, pta + 3 * size, statistics, compare, context) ) {
+			mergeIntoSorted(pta, pts, 8, 4, size, statistics, compare, context);
+			pta += 8 * size;
+			pts += 8 * size;
+			ptt = pta;
+		} else if ( invokeIsLess(pta + 7 * size, pta + 0 * size, statistics, compare, context) ) {
+			assignManyAt(pts, 0, 4, size, pta + 4 * size, statistics);
+			assignManyAt(pts, 4, 4, size, pta + 0 * size, statistics);
+			pta += 8 * size;
+			pts += 8 * size;
+			ptt = pta;
+		} else {
+			mergeIntoSorted(pta, pts, 8, 4, size, statistics, compare, context);
+			pta += 8 * size;
+			pts += 8 * size;
+			ptt = pta;
+		}
+		
+		step_3:
+		
+		pta = pte;
+		pts = buffer;
+		
+		if ( !invokeIsLess(pts + 15 * size, pts + 7 * size, statistics, compare, context) ) {
+			mergeIntoSorted(pts, pta, 16, 8, size, statistics, compare, context);
+			pta += 16 * size;
+			pts += 16 * size;
+			ptt = pta;
+		} else if ( invokeIsLess(pts + 15 * size, pts + 0 * size, statistics, compare, context) ) {
+			assignManyAt(pta, 0, 8, size, pts + 8 * size, statistics);
+			assignManyAt(pta, 8, 8, size, pts + 0 * size, statistics);
+			pta += 16 * size;
+			pts += 16 * size;
+			ptt = pta;
+		} else {
+			mergeIntoSorted(pts, pta, 16, 8, size, statistics, compare, context);
+			pta += 16 * size;
+			pts += 16 * size;
+			ptt = pta;
+		}
+	}
+	
+	if ( count % 16 > 4 ) {
+		quadSort_tail_merge(pta, buffer, count % 16, 4, size, statistics, compare, context);
+	}
+	
+	return 0;
+}
+
+void quadSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context) {
+	if ( count < 2 ) {
+		return;
+	} else if ( count <= 16 ) {
+		quadSort_tail_swap(array, buffer, count, size, statistics, compare, context);
+	} else if ( count < 128 ) {
+		if ( 0 == quadSort_quad_swap(array, buffer, count, size, statistics, compare, context) ) {
+			quadSort_tail_merge(array, buffer, count, 16, size, statistics, compare, context);
+		}
+	} else {
+		if ( 0 == quadSort_quad_swap(array, buffer, count, size, statistics, compare, context) ) {
+			quadSort_quad_merge(array, buffer, count, 16, size, statistics, compare, context);
+		}
 	}
 }
 

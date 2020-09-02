@@ -47,6 +47,9 @@ Similar to merge sort but uses natural ascending or descending runs when found a
 
 Converting this method to use < instead of <=> will give up one optimization for handling descending runs that contain equal elements.  Without the optimization, equal elements will end descending runs to preserve stability.
 
+### quadSort (stable)
+Similar to merge sort with optimized four element sort that merges four segments at a time instead of two.  Ported from scandum/quadsort repository.
+
 ### heapSort (unstable, in place)
 Classic heap sort where elements are organized into a tree structure then pulled from the tree in order.
 
@@ -64,3 +67,7 @@ Like quick sort but falls back to slower but more consistent heap sort when part
 * The sorting algorithms are all designed to operate on an array in memory from a single thread.
 * The sorting algorithms use a compare method that returns <=> 0 however most are written in such a way that they would work with a < method.
 * Most of the merge sort variants require a buffer of the same size as the data being sorted, but a few will dynamically adapt to the space provided by sacrificing speed.
+
+## Contact
+
+eric x cole gmail com
