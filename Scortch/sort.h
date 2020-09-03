@@ -44,8 +44,6 @@ void polymergeSort(void *array, void *buffer, size_t count, size_t size, struct 
 void bottomUpPolymergeSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context);
 void juggleMergeSort(void *array, void *buffer, size_t count, size_t size, unsigned juggling, struct SortingStatistics *statistics, Compare compare, void *context);
 
-void quadSort(void *array, void *buffer, size_t count, size_t size, struct SortingStatistics *statistics, Compare compare, void *context);
-
 void heapSort(void *array, size_t count, size_t size, void *temporary, struct SortingStatistics *statistics, Compare compare, void *context);
 void quickSort(void *array, size_t count, size_t size, void *temporary, struct SortingStatistics *statistics, Compare compare, void *context);
 void balancingQuickSort(void *array, size_t count, size_t size, unsigned imbalances, void *temporary, struct SortingStatistics *statistics, Compare compare, void *context);

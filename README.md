@@ -5,9 +5,7 @@ Sorting algorithms in C
 
 Introducing ColeSort, a faster merge sort.  Also introducing many failed experiments.
 
-ColeSort takes advantage of existing runs in the data being sorted.  Doing so introduces imbalance in the merges that can result in excessive comparisons.  ColeSort ameliorates this by using an alternate merge strategy on imbalanced merges.  ColeSort borrows from QuadSort the technique of merging four runs at a time.
-
-## This project was inspired by scandum / quadsort.
+ColeSort takes advantage of existing runs in the data being sorted, similar to Timsort.  Doing so introduces imbalance in the merges that can result in excessive comparisons.  ColeSort ameliorates this by using an alternate merge strategy on imbalanced merges.  ColeSort borrows from QuadSort the technique of merging four runs at a time.
 
 
 ### binaryInsertionSort (stable, in place)
@@ -52,9 +50,6 @@ Like insertion merge sort but at odd levels of recursion the merged results are 
 Similar to merge sort but uses natural ascending or descending runs when found and merges four segments at a time instead of two.  Has alternate merging techniques for imbalanced runs.
 
 Converting this method to use < instead of <=> will give up one optimization for handling descending runs that contain equal elements.  Without the optimization, equal elements will end descending runs to preserve stability.
-
-### quadSort (stable)
-Similar to merge sort with optimized four element sort that merges four segments at a time instead of two.  Ported from scandum/quadsort repository with some optimizations removed.
 
 ### heapSort (unstable, in place)
 Classic heap sort where elements are organized into a tree structure then pulled from the tree in order.
@@ -119,11 +114,11 @@ Tests measure the following statistics:
 
 The logic to gather other statistics may affect the timing.  It is assumed to be negligible.  The size of array elements is a parameter and all element movement uses memmove and memcpy.  It is assumed that using hard coded sizes and types could improve performance.  The gettimeofday method used for timing is not intended for that purpose and not well suited to small intervals.  Allocating the array used by merge sort variants is not included in the timing.
 
-Unsigned integers are used for simplicity in testing, but the timing is unlikely to reflect real world sorting.  The number of comparisons is a good metric, but it ignores algorithm complexity and data movement that will tip the scales for most algorithms.  I generally consider timings within a few percent of each other as equal, then use comparison count as a tie breaker.
+Unsigned integers are used for simplicity in testing, but the timing is unlikely to reflect real world sorting.  The number of comparisons is a good metric, but it ignores algorithm complexity and data movement that will tip the scales when comparisons are relatively simple.  When comparisons are complex, that quickly becomes the most significant metric.
 
-Any useful sort algorithm must be able to sort random data.  What makes a sort algorithm interesting is taking advantage of existing patterns in the data without adversely affecting the case of random data or unrecognized patterns.
+The table shows comparisons <, assignments =, time @, and functions ().  Assignments and comparisons only count operations on array and buffer elements.  A swap counts as two assignments; setting the temporary variable is ignored.  Only significant functions are counted, which varies by algorithm.
 
-There are around 80 tests applied to a dozen sort algorithms, so this is just a sample.
+There are around 80 tests applied to a dozen sort algorithms; this is just a sample.
 
 
     -- sort ascending unsigned array 10007

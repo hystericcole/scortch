@@ -434,24 +434,6 @@ void sortingComparison(void const *original, size_t count, size_t size, Compare 
 		printf("•• coleSort not stable\n");
 	}
 	
-	if ( 1 ) {
-		for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
-			memcpy(array, original, count * size);
-			sortingStatisticsReset(&s);
-			quadSort(array, buffer, count, size, &s, compare, context);
-			sortingStatisticsEnded(&s);
-			timeSum += s.timerEnded - s.timerBegan;
-			if ( s.timerEnded - s.timerBegan < timeBest ) { timeBest = s.timerEnded - s.timerBegan; }
-		}
-		s.timerEnded = s.timerBegan + timeBest;//timeSum / repetitions;
-		sortingStatisticsDisplay("quadSort", &s, count);
-		if ( !isAscending(array, count, size, compare, context) ) {
-			printf("•• quadSort not ascending\n");
-		} else if ( stableCompare && !isAscending(array, count, size, stableCompare, stableContext) ) {
-			printf("•• quadSort not stable\n");
-		}
-	}
-	
 	for ( timeBest = LONG_MAX, timeSum = 0, trial = 0 ; trial < repetitions ; ++trial ) {
 		memcpy(array, original, count * size);
 		sortingStatisticsReset(&s);
