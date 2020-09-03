@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-I.
+CFLAGS=-I. -O3
 DEPS = sort.h
 OBJ = main.o sort.o 
 

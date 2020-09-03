@@ -16,6 +16,7 @@ struct SortingStatistics {
 	long invocations;
 	long accesses;
 	long assignments;
+	long writes;
 	long comparisons;
 	
 	long timerBegan;

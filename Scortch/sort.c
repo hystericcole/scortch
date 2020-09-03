@@ -59,6 +59,7 @@ void accessAt(void *array, size_t from, size_t size, void * to, struct SortingSt
 void assignAt(void *array, size_t to, size_t size, void const * from, struct SortingStatistics *statistics) {
 	if ( statistics ) {
 		statistics->accesses += 1;
+		statistics->writes += 1;
 		statistics->assignments += 1;
 	}
 	
@@ -68,6 +69,7 @@ void assignAt(void *array, size_t to, size_t size, void const * from, struct Sor
 void assignManyAt(void *array, size_t to, size_t count, size_t size, void const * from, struct SortingStatistics *statistics) {
 	if ( statistics ) {
 		statistics->accesses += count;
+		statistics->writes += 1;
 		statistics->assignments += count;
 	}
 	
@@ -77,6 +79,7 @@ void assignManyAt(void *array, size_t to, size_t count, size_t size, void const 
 void swapAt(void *array, size_t from, size_t to, size_t size, void *temporary, struct SortingStatistics *statistics) {
 	if ( statistics ) {
 		statistics->accesses += 2;
+		statistics->writes += 2;
 		statistics->assignments += 2;
 	}
 	
@@ -88,6 +91,7 @@ void swapAt(void *array, size_t from, size_t to, size_t size, void *temporary, s
 void swapManyAt(void *array, size_t from, size_t to, size_t count, size_t size, void *buffer, struct SortingStatistics *statistics) {
 	if ( statistics ) {
 		statistics->accesses += 2 * count;
+		statistics->writes += 3;
 		statistics->assignments += 2 * count;
 	}
 	
@@ -97,10 +101,18 @@ void swapManyAt(void *array, size_t from, size_t to, size_t count, size_t size, 
 }
 
 void reverse(void *array, size_t count, size_t size, void *temporary, struct SortingStatistics *statistics) {
-	long i, end = count - 1, half = count / 2;
+	long from, to = count - 1;
 	
-	for ( i = 0 ; i < half ; ++i ) {
-		swapAt(array, i, end - i, size, temporary, statistics);
+	if ( statistics ) {
+		statistics->accesses += count & ~1;
+		statistics->writes += count & ~1;
+		statistics->assignments += count & ~1;
+	}
+	
+	for ( from = 0, to = count - 1 ; from < to ; ++from, --to ) {
+		memcpy(temporary, array + from * size, size);
+		memmove(array + from * size, array + to * size, size);
+		memcpy(array + to * size, temporary, size);
 	}
 }
 
@@ -112,6 +124,7 @@ void slideDown(void *array, size_t from, size_t to, size_t size, void *temporary
 	if ( statistics ) {
 		statistics->accesses += from - to + 1;
 		statistics->assignments += from - to + 1;
+		statistics->writes += 2;
 	}
 	
 	memcpy(temporary, array + from * size, size);
@@ -127,6 +140,7 @@ void slideUp(void *array, size_t from, size_t to, size_t size, void *temporary, 
 	if ( statistics ) {
 		statistics->accesses += to - from + 1;
 		statistics->assignments += to - from + 1;
+		statistics->writes += 2;
 	}
 	
 	memcpy(temporary, array + from * size, size);

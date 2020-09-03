@@ -13,7 +13,7 @@
 #include <sys/time.h>
 #include "sort.h"
 
-#define LESSRANDOM 1
+#define LESS_RANDOM 0
 
 #ifndef LONG_MAX
 #define LONG_MAX ((long)(~0UL >> 1))
@@ -43,6 +43,7 @@ uint64_t microsecondsSince1970() {
 void sortingStatisticsReset(struct SortingStatistics *statistics) {
 	statistics->invocations = 0;
 	statistics->accesses = 0;
+	statistics->writes = 0;
 	statistics->assignments = 0;
 	statistics->comparisons = 0;
 	statistics->timerBegan = microsecondsSince1970();
@@ -60,7 +61,7 @@ void sortingStatisticsEnded(struct SortingStatistics *statistics) {
 //	MARK: - Random
 
 uint32_t randomValue() {
-#if LESSRANDOM
+#if LESS_RANDOM
 	return (uint32_t)random();
 #else
 	return arc4random();
@@ -68,7 +69,7 @@ uint32_t randomValue() {
 }
 
 uint32_t randomValueUniform(uint32_t limit) {
-#if LESSRANDOM
+#if LESS_RANDOM
 	return random() % limit;
 #else
 	return arc4random_uniform(limit);
@@ -573,12 +574,12 @@ void sortingTest() {
 	unsigned index, count, tooth, root;
 	unsigned integerArray[] = {6, 3, 5, 99, 44, 37, 9, 66, 15, 69, 85, 1, 57, 19, 22, 98, 24, 73, 11, 13, 7, 42, 17, 23};
 	char const *stringArray[] = {"dog", "cat", "elk", "bat", "fox", "ape", "red", "orange", "yellow", "green", "blue", "indigo", "violet", "azure", "viridian", "cerulean", "teal", "sepia", "umber", "cerise", "sienna", "crimson", "periwinkle"};
-	unsigned integerArrayCounts[] = {101, 1009, 10007, 100003, 1000003, 4000037};
+	unsigned integerArrayCounts[] = {102, 1024, 10007, 100003, 1000003, 4000037};
 	unsigned integerArrayCount = countof(integerArrayCounts);
-	unsigned stringArrayCounts[] = {101, 1009, 10007, 100003, 1000003};
+	unsigned stringArrayCounts[] = {102, 1024, 10007, 100003, 1000003};
 	unsigned stringArrayCount = countof(stringArrayCounts);
 	
-#if LESSRANDOM
+#if LESS_RANDOM
 	uint32_t seed = arc4random();
 	srandom(seed);
 	printf("random seed %u\n", seed);
